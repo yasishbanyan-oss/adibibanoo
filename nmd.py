@@ -6,6 +6,8 @@ import random
 import re
 import shutil
 import sys
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -27,7 +29,7 @@ from telegram.ext import (
 # ==========================================
 # CONFIGURATION & LOGGING
 # ==========================================
-BOT_TOKEN = "8618205537:AAHiM8JQTha6ZOWZM4E9wEuaJxULkN1SWjI"  # توکن ربات خود را اینجا وارد کنید
+BOT_TOKEN = "8618205537:AAGXWSVJc3YhDT07aMRFwkPCl05mUVlPsso"  # توکن ربات خود را اینجا وارد کنید
 OWNER_ID = 6749949992
 DB_FILE = "db.json"
 TEMP_DB_FILE = "db.json.tmp"
@@ -38,6 +40,25 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ==========================================
+# DUMMY HTTP SERVER FOR RENDER WEB SERVICE
+# ==========================================
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+    def log_message(self, format, *args):
+        # خاموش کردن لاگ‌های تکراری HTTP
+        return
+
+def run_health_check_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logger.info(f"Dummy HTTP server running on port {port}")
+    server.serve_forever()
 
 # ==========================================
 # ADVANCED REGEX PATTERNS & TEXT NORMALIZER
@@ -784,6 +805,8 @@ def main():
 
     # ۴. ثبت Error Handler سراسری
     app.add_error_handler(global_error_handler)
+
+    threading.Thread(target=run_health_check_server, daemon=True).start()
 
     logger.info("Bot is running cleanly...")
     app.run_polling(drop_pending_updates=True)
