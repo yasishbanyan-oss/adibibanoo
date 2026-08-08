@@ -331,7 +331,7 @@ async def hourly_goh_khor_job(context: ContextTypes.DEFAULT_TYPE):
         mention = get_user_mention(int(top_user_id), fullname)
         increment_user_stat(db, int(top_user_id), "goh_khor_hour")
         
-        text = f"🏆 <b>گوه خور این ساعت</b>\n\n{mention}\n\nتو این یک ساعت خیلی حرف زدی 😂"
+        text = f'<tg-emoji emoji-id="5854843712181378616">🏆</tg-emoji> <b>گوه خور این ساعت</b>\n\n{mention}\n\nتو این یک ساعت خیلی حرف زدی <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji>'
         target_chat_id = context.job.chat_id
         if target_chat_id:
             try:
@@ -420,7 +420,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         signer_info = {"id": user_id, "name": query.from_user.full_name}
         rec["signers"].append(signer_info)
-        increment_user_stat(db, rec["target_id"], rec["stat_key"])
         db["action_records"][rec_id] = rec
         mark_db_dirty()
         save_db()
@@ -432,9 +431,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         signers_list = ", ".join([get_user_mention(u["id"], u["name"]) for u in rec["signers"]])
 
         new_text = (
-            f"<b>{html.escape(rec['action_title'])} {target_mention} با موفقیت ثبت شد! ✅</b>\n"
-            f"<b>ثبت کننده {html.escape(rec['action_title'])}: {creator_mention} 🦾</b>\n"
-            f"<b>⏳ در انتظار امضای شاهدان...</b>\n\n"
+            f"<b>{html.escape(rec['action_title'])} {target_mention} با موفقیت ثبت شد! <tg-emoji emoji-id=\"5206607081334906820\">✔️</tg-emoji></b>\n"
+            f"<b>ثبت کننده {html.escape(rec['action_title'])}: {creator_mention} <tg-emoji emoji-id=\"4956745198521549627\">🌟</tg-emoji></b>\n"
+            f"<b><tg-emoji emoji-id=\"5803348359972393936\">⚙️</tg-emoji> در انتظار امضای شاهدان...</b>\n\n"
             f"{rec['funny_text']}\n"
             f"<b>شاهدان {html.escape(rec['action_title'])}: <tg-emoji emoji-id=\"5458382591121964689\">✍️</tg-emoji></b>\n"
             f"{signers_list}"
@@ -507,10 +506,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         disagrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in disagrees]) if disagrees else "هیچکس"
 
         new_text = (
-            f"❤️ <b>کاپل امروز</b>\n\n"
-            f"{name1} ❤️ {name2}\n\n"
-            f"👍 <b>موافقان:</b> {agrees_text}\n"
-            f"👎 <b>مخالفان:</b> {disagrees_text}"
+            f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
+            f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} ❤️ {name2}</b>\n\n'
+            f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان: {agrees_text}</b>\n'
+            f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان: {disagrees_text}</b>'
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -808,32 +807,40 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "goh_khori": {
                     "title": "گوه‌خوری",
                     "stat_key": "goh_khori",
+                    "icon_id": "5819051035284479206",
                     "funny_text": "🚨 گوه خوری نوین مشاهده شد!\nای شاهدان حاضر در صحنه، برای ثبت این اثر فاخر امضا بزنید! <tg-emoji emoji-id=\"5819051035284479206\">💩</tg-emoji><tg-emoji emoji-id=\"5902342897969139427\">✨</tg-emoji>"
                 },
                 "kos_lisi": {
                     "title": "کصلیسی",
                     "stat_key": "kos_lisi",
+                    "icon_id": "5832692422647226240",
                     "funny_text": "🏆 مدال شجاعت کصلیسی تعلق گرفت!\nیک امضا از شاهدان جهت اعطای رسمی مدال نیاز است! <tg-emoji emoji-id=\"5818913299978263825\">👅</tg-emoji>"
                 },
                 "khaymali": {
                     "title": "خایمالی",
                     "stat_key": "khaymali",
+                    "icon_id": "5920300405341820405",
                     "funny_text": "🤲 خایمال‌نامه جدید صادر شد!\nبرای ثبت رسوایی خایمال شریف، نیازمند امضای حداقل یک شاهد مؤمن هستیم! <tg-emoji emoji-id=\"5888593320380206126\">📜</tg-emoji><tg-emoji emoji-id=\"5395444784611480792\">✏️</tg-emoji>"
                 },
                 "kos_khali": {
                     "title": "کصخلی",
                     "stat_key": "kos_khali",
+                    "icon_id": "5443038326535759644",
                     "funny_text": "📜 پرونده پزشکی کصخلی تنظیم شد!\nجهت تأیید نهایی، امضای شاهد الزامی است! <tg-emoji emoji-id=\"5933656396422717191\">🌟</tg-emoji>"
                 },
                 "jendegi": {
                     "title": "جندگی",
                     "stat_key": "jendegi",
+                    "icon_id": "4974615079971455718",
                     "funny_text": "👑 ثبت جندگی جدید در سیستم با موفقیت ثبت شد!\nنیازمند امضای یک شاهد برای اعطای گواهی رسمی! <tg-emoji emoji-id=\"4974615079971455718\">🖤</tg-emoji>"
                 }
             }
             cfg = action_configs[action_type]
             rec_id = f"{chat_id}_{update.message.message_id}"
             
+            # ثبت آنی آمار بدون نیاز به دکمه امضا
+            increment_user_stat(db, target_user.id, cfg["stat_key"])
+
             if "action_records" not in db: db["action_records"] = {}
             db["action_records"][rec_id] = {
                 "target_id": target_user.id,
@@ -852,12 +859,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             creator_mention = get_user_mention(user_id, update.effective_user.full_name)
 
             init_msg = (
-                f"<b>{cfg['title']} {target_mention} با موفقیت ثبت شد! ✅</b>\n"
-                f"<b>ثبت کننده {cfg['title']}: {creator_mention} 🦾</b>\n"
-                f"<b>⏳ در انتظار امضای شاهدان...</b>\n\n"
-                f"{cfg['funny_text']}\n"
-                f"<b>شاهدان {cfg['title']}: <tg-emoji emoji-id=\"5458382591121964689\">✍️</tg-emoji></b>\n"
-                f"هیچکس"
+                f"<b>{cfg['title']} {target_mention} با موفقیت ثبت شد! <tg-emoji emoji-id=\"5206607081334906820\">✔️</tg-emoji></b>\n"
+                f"<b>ثبت کننده {cfg['title']}: {creator_mention} <tg-emoji emoji-id=\"4956745198521549627\">🌟</tg-emoji></b>\n"
+                f"<b><tg-emoji emoji-id=\"5803348359972393936\">⚙️</tg-emoji> در انتظار امضای شاهدان...</b>\n\n"
+                f"<tg-emoji emoji-id=\"{cfg['icon_id']}\">🔥</tg-emoji> {cfg['funny_text']}"
             )
 
             kb = InlineKeyboardMarkup([
@@ -1081,10 +1086,16 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
         is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
         if is_cd:
-            m_rem, s_rem = divmod(rem_sec, 60)
+            m_rem = rem_sec // 60
             name1 = get_user_mention(cd_data["u1"]["id"], cd_data["u1"]["name"])
             name2 = get_user_mention(cd_data["u2"]["id"], cd_data["u2"]["name"])
-            msg = f"❤️ <b>کاپل این دوره:</b>\n\n{name1} ❤️ {name2}\n\n⏳ ولی <b>{m_rem} دقیقه و {s_rem} ثانیه</b> دیگه کاپل جدید مشخص میشه."
+            msg = (
+                f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
+                f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} ❤️ {name2}</b>\n\n'
+                f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان ثبت شده: هیچکس</b>\n'
+                f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان ثبت شده : هیچکس</b>\n\n'
+                f'<b>+ {m_rem} دقیقه دیگه کاپل بعدیو میگم بچهااااا!<tg-emoji emoji-id="5816460319601467354">😺</tg-emoji></b>'
+            )
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
         else:
             vm = await get_valid_group_members(context, chat_id, db)
@@ -1107,7 +1118,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ])
 
                 sent_msg = await update.message.reply_text(
-                    f"❤️ <b>کاپل امروز</b>\n\n{name1} ❤️ {name2}\n\n👍 <b>موافقان:</b> هیچکس\n👎 <b>مخالفان:</b> هیچکس",
+                    f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} ❤️ {name2}</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان: هیچکس</b>\n'
+                    f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان: هیچکس</b>',
                     reply_markup=kb,
                     parse_mode=ParseMode.HTML
                 )
@@ -1156,7 +1170,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif norm_text in ["این چقد کونیه", "این چقدر کونیه", "درصد کونی بودن"] and features.get("koni_percent", True):
         if update.message.reply_to_message:
             tu = update.message.reply_to_message.from_user
-            await update.message.reply_text(f"{get_user_mention(tu.id, tu.full_name)}\n\n🤣 {random.randint(0, 100)}٪ کونیه", parse_mode=ParseMode.HTML)
+            await update.message.reply_text(f"{get_user_mention(tu.id, tu.full_name)}\n\n<tg-emoji emoji-id=\"6033112209612082866\">🤣</tg-emoji> <b>{random.randint(0, 100)}٪ کونیه</b>", parse_mode=ParseMode.HTML)
 
     # ۱۰. تشخیص «لف»
     elif LEF_PATTERN.search(raw_text) and features.get("lef", True):
