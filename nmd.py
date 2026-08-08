@@ -15,7 +15,6 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ButtonStyle,
 )
 from telegram.constants import ParseMode, ChatMemberStatus
 from telegram.ext import (
@@ -442,7 +441,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"✍️ امضای شاهدان ({len(rec['signers'])})", callback_data=f"sign_action:{rec_id}", style=ButtonStyle.PRIMARY)],
+            [InlineKeyboardButton(f"✍️ امضای شاهدان ({len(rec['signers'])})", callback_data=f"sign_action:{rec_id}")],
             [InlineKeyboardButton(f"📊 آمار کل {rec['action_title']} این کاربر", callback_data=f"stat_action:{rec_id}")]
         ])
 
@@ -516,8 +515,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("🟢 موافقم", callback_data="couple_agree", style=ButtonStyle.PRIMARY),
-                InlineKeyboardButton("🔴 افتضاح", callback_data="couple_disagree", style=ButtonStyle.DANGER)
+                InlineKeyboardButton("🟢 موافقم", callback_data="couple_agree"),
+                InlineKeyboardButton("🔴 افتضاح", callback_data="couple_disagree")
             ]
         ])
 
@@ -862,7 +861,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✍️ امضای شاهدان (۰)", callback_data=f"sign_action:{rec_id}", style=ButtonStyle.PRIMARY)],
+                [InlineKeyboardButton("✍️ امضای شاهدان (۰)", callback_data=f"sign_action:{rec_id}")],
                 [InlineKeyboardButton(f"📊 آمار کل {cfg['title']} این کاربر", callback_data=f"stat_action:{rec_id}")]
             ])
 
@@ -1102,8 +1101,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 kb = InlineKeyboardMarkup([
                     [
-                        InlineKeyboardButton("🟢 موافقم", callback_data="couple_agree", style=ButtonStyle.PRIMARY),
-                        InlineKeyboardButton("🔴 افتضاح", callback_data="couple_disagree", style=ButtonStyle.DANGER)
+                        InlineKeyboardButton("🟢 موافقم", callback_data="couple_agree"),
+                        InlineKeyboardButton("🔴 افتضاح", callback_data="couple_disagree")
                     ]
                 ])
 
