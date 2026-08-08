@@ -27,7 +27,7 @@ from telegram.ext import (
 # ==========================================
 # CONFIGURATION & LOGGING
 # ==========================================
-BOT_TOKEN = "8618205537:AAGXWSVJc3YhDT07aMRFwkPCl05mUVlPsso"  # توکن ربات خود را اینجا وارد کنید
+BOT_TOKEN = "8618205537:AAHiM8JQTha6ZOWZM4E9wEuaJxULkN1SWjI"  # توکن ربات خود را اینجا وارد کنید
 OWNER_ID = 6749949992
 DB_FILE = "db.json"
 TEMP_DB_FILE = "db.json.tmp"
