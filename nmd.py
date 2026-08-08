@@ -752,6 +752,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     features = db.get("features", {})
     norm_text = normalize_text(raw_text)
+    clean_raw = raw_text.strip().lower()
 
     # --------------------------------------
     # SPECIAL NAME RESPONSES (موسوی / خانم ادیبی / تو کی هستی)
@@ -762,9 +763,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update.message.reply_to_message.from_user.id == context.bot.id
     )
 
-    clean_raw = raw_text.strip().lower()
-
-    # ۱. تو کی هستی (بالاترین اولویت)
     if "تو کی هستی" in clean_raw or (is_reply_to_bot and "تو کی هستی" in clean_raw):
         await update.message.reply_text(
             '<b>من خانم ادیبی هستم خوشگله! </b><tg-emoji emoji-id="5321415182109401472">😽</tg-emoji>',
@@ -772,7 +770,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ۲. موسوی
     elif "موسوی" in clean_raw or (is_reply_to_bot and "موسوی" in clean_raw):
         await update.message.reply_text(
             '<b>چیکارم شوهرم داری بی‌حیا ! </b><tg-emoji emoji-id="5276023270485810015">🥹</tg-emoji>',
@@ -780,7 +777,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ۳. ادیبی / خانم ادیبی
     elif any(k in clean_raw for k in ["خانم ادیبی", "ادیبی"]) or (is_reply_to_bot and any(k in clean_raw for k in ["خانم ادیبی", "ادیبی"])):
         await update.message.reply_text(
             '<b>بله خودم هستم چیکارم دارین؟ </b><tg-emoji emoji-id="5276088141671846201">🌟</tg-emoji>',
@@ -823,7 +819,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۲. خوشتیپ / خوژتیپ (با استایل اختصاصی پریمیوم و تگ مستقیم)
+    # ۲. خوشتیپ / خوژتیپ (با استایل پریمیوم)
     elif norm_text in ["خوشتیپ کیه", "خوشتیپ کی", "خوژتیپ کیه", "خوژتیپ کی", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
         word_label = "خوژتیپ" if "خوژ" in norm_text else "خوشتیپ"
         is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "handsome")
@@ -850,41 +846,55 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۳. جنده (با تایمر و تک‌کلمه)
+    # ۳. جنده (با استایل جدید پریمیوم)
     elif norm_text in ["جنده کیه", "جنده کی", "جنده"] and features.get("jende", True):
         is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jende")
         if is_cd:
-            m_rem, s_rem = divmod(rem_sec, 60)
+            m_rem = rem_sec // 60
             target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
             msg = (
-                f"👑 <b>جنده گروه اینه:</b>\n\n{target_mention}\n\n"
-                f"⏳ ولی <b>{m_rem} دقیقه و {s_rem} ثانیه</b> دیگه یکی دیگه مشخص میشه."
+                f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه :</b>\n\n'
+                f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>\n\n'
+                f'<b>+ ولی خب هر جندگی دائمی نیست! {m_rem} دقیقه دیگه جنده بعدی معرفی میشه! <tg-emoji emoji-id="4974573543342736117">🖤</tg-emoji></b>'
             )
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
         else:
             vm = await get_valid_group_members(context, chat_id, db)
             if vm:
                 tid, info = random.choice(vm)
+                target_mention = get_user_mention(int(tid), info["fullname"])
                 set_cooldown_data(db, chat_id, "jende", {"id": int(tid), "fullname": info["fullname"]})
-                await update.message.reply_text(f"👑 <b>جنده گروه اینه</b>\n\n{get_user_mention(int(tid), info['fullname'])}", parse_mode=ParseMode.HTML)
+                
+                msg = (
+                    f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۴. کونی (با تایمر و تک‌کلمه)
+    # ۴. کونی (با استایل جدید پریمیوم)
     elif norm_text in ["کونی کیه", "کونی کی", "کونی"] and features.get("koni", True):
         is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koni")
         if is_cd:
-            m_rem, s_rem = divmod(rem_sec, 60)
+            m_rem = rem_sec // 60
             target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
             msg = (
-                f"🍑 <b>کونی گروه اینه:</b>\n\n{target_mention}\n\n"
-                f"⏳ ولی <b>{m_rem} دقیقه و {s_rem} ثانیه</b> دیگه یکی دیگه مشخص میشه."
+                f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه :</b>\n\n'
+                f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>\n\n'
+                f'<b>+ ولی خب {m_rem} دقیقه دیگه کونی بعدی معرفی میشه! <tg-emoji emoji-id="4974672507979170737">🍌</tg-emoji></b>'
             )
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
         else:
             vm = await get_valid_group_members(context, chat_id, db)
             if vm:
                 tid, info = random.choice(vm)
+                target_mention = get_user_mention(int(tid), info["fullname"])
                 set_cooldown_data(db, chat_id, "koni", {"id": int(tid), "fullname": info["fullname"]})
-                await update.message.reply_text(f"🍑 <b>کونی گروه اینه</b>\n\n{get_user_mention(int(tid), info['fullname'])}", parse_mode=ParseMode.HTML)
+                
+                msg = (
+                    f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
     # ۵. شیپ / کاپل (با دکمه‌های موافقم / افتضاح)
     elif norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
@@ -934,7 +944,18 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("❌ اعضای کافی موجود نیست!")
 
-    # ۶. سیستم شعرخوانی
+    # ۶. پیشنهاد غذا (پشتیبانی گسترده از عبارات دارای غذا/غدا)
+    elif ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
+        fl = db.get("foods", [])
+        if fl:
+            selected_food = random.choice(fl)
+            msg = (
+                f'<b><tg-emoji emoji-id="5418248505447698083">🧽</tg-emoji> دنبال غذایی؟ بنظرم بهترین ایده غذا برای تو اینه :</b>\n\n'
+                f'<b><tg-emoji emoji-id="5357066069250948384">🐱</tg-emoji> | {html.escape(selected_food)}</b>'
+            )
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+    # ۷. سیستم شعرخوانی
     elif norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
         custom_names = db.get("custom_names", [])
         if custom_names:
@@ -950,12 +971,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         poem_template = random.choice(DEFAULT_POEMS)
         final_poem = poem_template.format(name=target_name)
         await update.message.reply_text(f"📜 <b>{final_poem}</b>", parse_mode=ParseMode.HTML)
-
-    # ۷. پیشنهاد غذا
-    elif norm_text in ["غذا چی بخورم", "غذا چی بپزم", "غذا چی بخوریم", "غذا چی بپزیم"] and features.get("food", True):
-        fl = db.get("foods", [])
-        if fl:
-            await update.message.reply_text(f"😋 پیشنهاد من به تو:\n\n🍔 <b>{html.escape(random.choice(fl))}</b>", parse_mode=ParseMode.HTML)
 
     # ۸. درصد کونی بودن
     elif norm_text == "این چقد کونیه" and features.get("koni_percent", True):
