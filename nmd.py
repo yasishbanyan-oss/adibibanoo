@@ -754,7 +754,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     norm_text = normalize_text(raw_text)
 
     # --------------------------------------
-    # SPECIAL NAME RESPONSES (موسوی / خانم ادیبی)
+    # SPECIAL NAME RESPONSES (موسوی / خانم ادیبی / تو کی هستی)
     # --------------------------------------
     is_reply_to_bot = (
         update.message.reply_to_message and 
@@ -762,16 +762,28 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update.message.reply_to_message.from_user.id == context.bot.id
     )
 
-    if norm_text == "موسوی" or (is_reply_to_bot and "موسوی" in raw_text):
+    clean_raw = raw_text.strip().lower()
+
+    # ۱. تو کی هستی (بالاترین اولویت)
+    if "تو کی هستی" in clean_raw or (is_reply_to_bot and "تو کی هستی" in clean_raw):
         await update.message.reply_text(
-            '<b>چیکارم شوهرم داری بی‌حیا ! </b><tg-emoji emoji-id="5424906801931002013">🥹</tg-emoji>',
+            '<b>من خانم ادیبی هستم خوشگله! </b><tg-emoji emoji-id="5321415182109401472">😽</tg-emoji>',
             parse_mode=ParseMode.HTML
         )
         return
 
-    elif norm_text in ["ادیبی", "خانم ادیبی", "تو کی هستی"] or (is_reply_to_bot and any(k in raw_text for k in ["ادیبی", "خانم ادیبی", "تو کی هستی"])):
+    # ۲. موسوی
+    elif "موسوی" in clean_raw or (is_reply_to_bot and "موسوی" in clean_raw):
         await update.message.reply_text(
-            '<b>بله خودم هستم چیکارم دارین؟ </b><tg-emoji emoji-id="5427008713266472251">🌟</tg-emoji>',
+            '<b>چیکارم شوهرم داری بی‌حیا ! </b><tg-emoji emoji-id="5276023270485810015">🥹</tg-emoji>',
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # ۳. ادیبی / خانم ادیبی
+    elif any(k in clean_raw for k in ["خانم ادیبی", "ادیبی"]) or (is_reply_to_bot and any(k in clean_raw for k in ["خانم ادیبی", "ادیبی"])):
+        await update.message.reply_text(
+            '<b>بله خودم هستم چیکارم دارین؟ </b><tg-emoji emoji-id="5276088141671846201">🌟</tg-emoji>',
             parse_mode=ParseMode.HTML
         )
         return
@@ -874,7 +886,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 set_cooldown_data(db, chat_id, "koni", {"id": int(tid), "fullname": info["fullname"]})
                 await update.message.reply_text(f"🍑 <b>کونی گروه اینه</b>\n\n{get_user_mention(int(tid), info['fullname'])}", parse_mode=ParseMode.HTML)
 
-    # ۵. شیپ / کاپل (با دکمه‌های رنگی و تگ)
+    # ۵. شیپ / کاپل (با دکمه‌های موافقم / افتضاح)
     elif norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
         is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
         if is_cd:
