@@ -151,6 +151,7 @@ def get_default_db_structure() -> dict:
         "active_chats": [],
         "foods": list(DEFAULT_FOODS),
         "custom_names": [],
+        "poems": list(DEFAULT_POEMS),
         "media_lef": None,
         "cooldown_minutes": 10,
         "cooldowns": {},
@@ -160,6 +161,7 @@ def get_default_db_structure() -> dict:
             "handsome": True,
             "jende": True,
             "koni": True,
+            "jaghi": True,
             "ship": True,
             "food": True,
             "lef": True,
@@ -172,7 +174,8 @@ def get_default_db_structure() -> dict:
             "waiting_add_food": [],
             "waiting_del_food": [],
             "waiting_cooldown": [],
-            "waiting_poem_names": []
+            "waiting_poem_names": [],
+            "waiting_add_poem": []
         }
     }
 
@@ -331,7 +334,7 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_status = result.new_chat_member.status
     if new_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR]:
         welcome_msg = (
-            "<b>سلام نینیا ، یه ربات سرگرمی اینجاست...! </b>"
+            "<b>سلام نینیا ، گودی اینجاست...! </b>"
             '<tg-emoji emoji-id="5276251363313996750">😊</tg-emoji>\n\n'
             "<b>شروع کنید به مسخره بازی که حال کنیم! </b>"
             '<tg-emoji emoji-id="5274211661870295868">😌</tg-emoji>'
@@ -410,6 +413,7 @@ async def render_main_panel_message(query):
         [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef")],
         [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods")],
         [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names")],
+        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem")],
         [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown")],
         [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features")]
     ])
@@ -425,6 +429,7 @@ async def render_features_panel_message(query, db: dict):
         [InlineKeyboardButton(f"{status('handsome')} 😎 خوشتیپ", callback_data="toggle_handsome")],
         [InlineKeyboardButton(f"{status('jende')} 😂 جنده", callback_data="toggle_jende")],
         [InlineKeyboardButton(f"{status('koni')} 🤣 کونی", callback_data="toggle_koni")],
+        [InlineKeyboardButton(f"{status('jaghi')} 🍌 جقی", callback_data="toggle_jaghi")],
         [InlineKeyboardButton(f"{status('ship')} ❤️ شیپ", callback_data="toggle_ship")],
         [InlineKeyboardButton(f"{status('food')} 🍽 غذا", callback_data="toggle_food")],
         [InlineKeyboardButton(f"{status('lef')} 🖼 لف", callback_data="toggle_lef")],
@@ -581,6 +586,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             save_db()
         current_names = ", ".join(db.get("custom_names", [])) or "هیچ اسمی ثبت نشده"
         await query.message.edit_text(f"📜 <b>اسامی فعلی برای شعرها:</b>\n{current_names}\n\nلطفاً اسامی جدید را یکی‌یکی بفرستید. وقتی تمام شد دستور <code>/done</code> را ارسال کنید.\nبرای لغو دستور /cancel را بزنید.", parse_mode=ParseMode.HTML)
+    elif data == "panel_add_poem":
+        if user_id not in db["states"]["waiting_add_poem"]:
+            db["states"]["waiting_add_poem"].append(user_id)
+            mark_db_dirty()
+            save_db()
+        await query.message.edit_text("➕ لطفاً شعر جدید را بفرستید. می‌تونید از کلمه <code>یوزرنیم</code> یا <code>{name}</code> برای جای‌گذاری اسم استفاده کنید:\nمثال: <code>یوزرنیم خواست منو خراب کنه بردن خرابه کردنش</code>\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
     elif data.startswith("food_page_"):
         await render_food_list_page(query, db, page=int(data.replace("food_page_", "")))
     elif data == "panel_features":
@@ -598,6 +609,22 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 # ==========================================
 # COMMAND HANDLERS
 # ==========================================
+async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    chat_type = update.effective_chat.type
+    bot_info = await context.bot.get_me()
+    
+    if chat_type == "private":
+        start_pv_msg = "سلام عزیزم! به ربات جذاب من خوش اومدی! با استفاده از دکمه شیشه‌ای زیر منو به گروهت اضافه کن!"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ اضافه کردن گودی به گروه", url=f"https://t.me/{bot_info.username}?startgroup=true")]
+        ])
+        await update.message.reply_text(start_pv_msg, reply_markup=kb)
+    else:
+        start_group_msg = '<b>بله عزیزم؟ من تو گروهم آماده و حاضر! </b><tg-emoji emoji-id="5283268017025736027">🤨</tg-emoji>'
+        await update.message.reply_text(start_group_msg, parse_mode=ParseMode.HTML)
+
 async def command_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -612,6 +639,7 @@ async def command_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef")],
         [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods")],
         [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names")],
+        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem")],
         [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown")],
         [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features")]
     ])
@@ -625,7 +653,7 @@ async def command_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     cancelled = False
     states = db.get("states", {})
-    for k in ["waiting_lef_media", "waiting_add_food", "waiting_del_food", "waiting_cooldown", "waiting_poem_names"]:
+    for k in ["waiting_lef_media", "waiting_add_food", "waiting_del_food", "waiting_cooldown", "waiting_poem_names", "waiting_add_poem"]:
         if user_id in states.get(k, []):
             states[k].remove(user_id)
             cancelled = True
@@ -750,12 +778,24 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"✅ اسم «{name_item}» ثبت شد. اسم بعدی را بفرستید یا /done را بزنید.")
                 return
 
+        if user_id in db["states"].get("waiting_add_poem", []):
+            if raw_text and not raw_text.startswith("/"):
+                poem_item = raw_text.strip().replace("یوزرنیم", "{name}")
+                if "poems" not in db:
+                    db["poems"] = []
+                db["poems"].append(poem_item)
+                db["states"]["waiting_add_poem"].remove(user_id)
+                mark_db_dirty()
+                save_db(force=True)
+                await update.message.reply_text("✅ شعر جدید با موفقیت اضافه شد.")
+                return
+
     features = db.get("features", {})
     norm_text = normalize_text(raw_text)
     clean_raw = raw_text.strip().lower()
 
     # --------------------------------------
-    # SPECIAL NAME RESPONSES (موسوی / خانم ادیبی / تو کی هستی)
+    # SPECIAL NAME RESPONSES (گودی / تو کی هستی)
     # --------------------------------------
     is_reply_to_bot = (
         update.message.reply_to_message and 
@@ -765,19 +805,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "تو کی هستی" in clean_raw or (is_reply_to_bot and "تو کی هستی" in clean_raw):
         await update.message.reply_text(
-            '<b>من خانم ادیبی هستم خوشگله! </b><tg-emoji emoji-id="5321415182109401472">😽</tg-emoji>',
+            '<b>من گودی هستم خوشگله! </b><tg-emoji emoji-id="5321415182109401472">😽</tg-emoji>',
             parse_mode=ParseMode.HTML
         )
         return
 
-    elif "موسوی" in clean_raw or (is_reply_to_bot and "موسوی" in clean_raw):
-        await update.message.reply_text(
-            '<b>چیکارم شوهرم داری بی‌حیا ! </b><tg-emoji emoji-id="5276023270485810015">🥹</tg-emoji>',
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    elif any(k in clean_raw for k in ["خانم ادیبی", "ادیبی"]) or (is_reply_to_bot and any(k in clean_raw for k in ["خانم ادیبی", "ادیبی"])):
+    elif "گودی" in clean_raw or (is_reply_to_bot and "گودی" in clean_raw):
         await update.message.reply_text(
             '<b>بله خودم هستم چیکارم دارین؟ </b><tg-emoji emoji-id="5276088141671846201">🌟</tg-emoji>',
             parse_mode=ParseMode.HTML
@@ -846,7 +879,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۳. جنده (با استایل جدید پریمیوم)
+    # ۳. جنده (با استایل پریمیوم)
     elif norm_text in ["جنده کیه", "جنده کی", "جنده"] and features.get("jende", True):
         is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jende")
         if is_cd:
@@ -871,7 +904,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۴. کونی (با استایل جدید پریمیوم)
+    # ۴. کونی (با استایل پریمیوم)
     elif norm_text in ["کونی کیه", "کونی کی", "کونی"] and features.get("koni", True):
         is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koni")
         if is_cd:
@@ -896,7 +929,34 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۵. شیپ / کاپل (با دکمه‌های موافقم / افتضاح)
+    # ۵. جقی (با استایل جدید پریمیوم)
+    elif norm_text in ["جقی", "جقی کیه", "جقی گروه"] and features.get("jaghi", True):
+        is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jaghi")
+        if is_cd:
+            m_rem = rem_sec // 60
+            target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
+            msg = (
+                f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه :</b>\n\n'
+                f'<b><tg-emoji emoji-id="4974362376980660892">🍌</tg-emoji> | {target_mention}</b>\n\n'
+                f'<b>+ بزن که خوب میزنی رفیق گلم! 😂</b>\n'
+                f'<b>- ولی این جق ابدی نیست! {m_rem} دقیقه دیگه جقی بعدیو معرفی میکنم. <tg-emoji emoji-id="6033112209612082866">🍌</tg-emoji></b>'
+            )
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        else:
+            vm = await get_valid_group_members(context, chat_id, db)
+            if vm:
+                tid, info = random.choice(vm)
+                target_mention = get_user_mention(int(tid), info["fullname"])
+                set_cooldown_data(db, chat_id, "jaghi", {"id": int(tid), "fullname": info["fullname"]})
+                
+                msg = (
+                    f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="4974362376980660892">🍌</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>+ بزن که خوب میزنی رفیق گلم! 😂</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+    # ۶. شیپ / کاپل
     elif norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
         is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
         if is_cd:
@@ -944,7 +1004,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("❌ اعضای کافی موجود نیست!")
 
-    # ۶. پیشنهاد غذا (پشتیبانی گسترده از عبارات دارای غذا/غدا)
+    # ۷. پیشنهاد غذا
     elif ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
         fl = db.get("foods", [])
         if fl:
@@ -955,7 +1015,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۷. سیستم شعرخوانی
+    # ۸. سیستم شعرخوانی
     elif norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
         custom_names = db.get("custom_names", [])
         if custom_names:
@@ -968,17 +1028,18 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 target_name = "رفیق"
 
-        poem_template = random.choice(DEFAULT_POEMS)
+        all_poems = db.get("poems", DEFAULT_POEMS)
+        poem_template = random.choice(all_poems)
         final_poem = poem_template.format(name=target_name)
         await update.message.reply_text(f"📜 <b>{final_poem}</b>", parse_mode=ParseMode.HTML)
 
-    # ۸. درصد کونی بودن
+    # ۹. درصد کونی بودن
     elif norm_text == "این چقد کونیه" and features.get("koni_percent", True):
         if update.message.reply_to_message:
             tu = update.message.reply_to_message.from_user
             await update.message.reply_text(f"{get_user_mention(tu.id, tu.full_name)}\n\n🤣 {random.randint(0, 100)}٪ کونیه", parse_mode=ParseMode.HTML)
 
-    # ۹. تشخیص «لف»
+    # ۱۰. تشخیص «لف»
     elif LEF_PATTERN.search(raw_text) and features.get("lef", True):
         ml = db.get("media_lef")
         if ml:
@@ -1008,6 +1069,7 @@ def main():
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
 
     app.add_handler(CallbackQueryHandler(handle_callback_query))
+    app.add_handler(CommandHandler("start", command_start))
     app.add_handler(CommandHandler("panel", command_panel))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
