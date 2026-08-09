@@ -618,6 +618,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 return
 
             game["status"] = "playing"
+            # 💥 تعیین قطعی نوبت شروع برای بازیکن اول (p1_id)
             game["turn"] = game["p1_id"]
             db["xo_games"][game_id] = game
             mark_db_dirty()
@@ -637,7 +638,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 await query.answer("شما جزو بازیکنان این بازی نیستید!", show_alert=True)
                 return
 
-            if user_id != game["turn"]:
+            if user_id != game.get("turn"):
                 await query.answer("نوبت شما نیست!", show_alert=True)
                 return
 
@@ -646,7 +647,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 await query.answer("این خانه قبلاً انتخاب شده است!", show_alert=True)
                 return
 
-            symbol = "⭕️" if user_id == game["p1_id"] else "❌"
+            # بازیکن اول با دایره (O) و بازیکن دوم با ضربدر (X)
+            symbol = "O" if user_id == game["p1_id"] else "X"
             game["board"][idx] = symbol
             winner_symbol = check_xo_winner(game["board"])
 
@@ -664,8 +666,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                         '<b>- ای بابا حیف شد ، دو طرف خیلی قوی بودن و بازی مساوی شد. 🦸‍♀️</b>'
                     )
                 else:
-                    winner_id = game["p1_id"] if winner_symbol == "⭕️" else game["p2_id"]
-                    winner_name = game["p1_name"] if winner_symbol == "⭕️" else game["p2_name"]
+                    winner_id = game["p1_id"] if winner_symbol == "O" else game["p2_id"]
+                    winner_name = game["p1_name"] if winner_symbol == "O" else game["p2_name"]
                     w_mention = get_user_mention(winner_id, winner_name)
                     res_txt = (
                         '<b>اوووه! میبینم که بازی تموم شده!</b>\n'
@@ -679,6 +681,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 return
 
             else:
+                # تعویض نوبت
                 game["turn"] = game["p2_id"] if user_id == game["p1_id"] else game["p1_id"]
                 db["xo_games"][game_id] = game
                 mark_db_dirty()
@@ -1244,17 +1247,17 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲ issue⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳ Barb⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿ screen⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿\n"
                 "⣿⣿⠛⠉⠁⠄⢕⡳⣽⡾⣿⢽⣯⡿⣮⢚⣅⠹⣿⣿⣿\n"
                 "⡿⠋⠄⠄⠄⠄⢀⠒⠝⣞⢿⡿⣿⣽⢿⡽⣧⣳⡅⠌⠻⣿\n"
