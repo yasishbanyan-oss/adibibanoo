@@ -1045,7 +1045,11 @@ async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
             [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
         ])
+        
+        logger.warning("[DEBUG XO] ABOUT TO SEND XO MESSAGE")
         await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+        logger.warning("[DEBUG XO] XO MESSAGE SENT")
+
     except Exception:
         logger.exception("Error in start_dwoz_game:")
 
@@ -1070,16 +1074,27 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         norm_text = normalize_text(raw_text)
 
         # --------------------------------------
-        # TRACE LOGGING FOR DEBUGGING
+        # TRACE DEBUG LOGS
         # --------------------------------------
-        logger.info(f"[TRACE] user={user_id} chat={chat_id} | raw_text='{raw_text}' | clean_raw='{clean_raw}' | norm_text='{norm_text}'")
+        logger.warning(
+            f"[DEBUG MESSAGE] chat_id={chat_id} "
+            f"user_id={user_id} "
+            f"raw={raw_text!r} "
+            f"clean={clean_raw!r} "
+            f"norm={norm_text!r}"
+        )
 
         # --------------------------------------
-        # 💥 CHECK DWOZ FIRST (مستقیم و اولویت مطلق)
+        # 💥 CHECK DWOZ FIRST (اولویت مطلق و قبل از تمام Stateها)
         # --------------------------------------
-        logger.info("Reached XO trigger check")
-        if is_dwoz_trigger(raw_text) or is_dwoz_trigger(clean_raw) or is_dwoz_trigger(norm_text):
-            logger.info("XO trigger matched")
+        is_matched = is_dwoz_trigger(raw_text) or is_dwoz_trigger(clean_raw) or is_dwoz_trigger(norm_text)
+        logger.warning(
+            f"[DEBUG XO CHECK] clean_raw={clean_raw!r} "
+            f"matched={is_matched}"
+        )
+
+        if is_matched:
+            logger.warning("[DEBUG XO] XO TRIGGER MATCHED")
             await start_dwoz_game(update, context)
             return
 
@@ -1260,8 +1275,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄ party⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢸⢽⣿ military⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
@@ -1827,7 +1842,7 @@ def main():
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
-    # پردازش کلیه پیام‌های متنی
+    # هاندر اصلی پیام‌های متنی بدون نیاز به فیلتر دستی
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_messages))
     app.add_error_handler(global_error_handler)
 
