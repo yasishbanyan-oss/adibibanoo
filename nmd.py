@@ -1119,6 +1119,38 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     features = db.get("features", {})
 
     # --------------------------------------
+    # TIC-TAC-TOE / بازی دوز (اولویت اول)
+    # --------------------------------------
+    if clean_raw in ["دوز", "گودی دوز", "گودی دوز بزار"]:
+        game_id = f"{chat_id}_{update.message.message_id}"
+        if "xo_games" not in db: db["xo_games"] = {}
+        
+        db["xo_games"][game_id] = {
+            "host_id": user_id,
+            "p1_id": None,
+            "p1_name": None,
+            "p2_id": None,
+            "p2_name": None,
+            "board": [None] * 9,
+            "turn": None,
+            "status": "waiting"
+        }
+        mark_db_dirty()
+        save_db()
+
+        txt = (
+            '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+            '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798294298943">⏳</tg-emoji></b>\n\n'
+            '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
+            [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
+        ])
+        await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+
+    # --------------------------------------
     # HELP / راهنما PANEL
     # --------------------------------------
     help_triggers = [
@@ -1157,7 +1189,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark_db_dirty()
         save_db()
 
-        # تگ مخفی ادمین‌ها
         admin_mentions = ""
         try:
             admins = await context.bot.get_chat_administrators(chat_id)
@@ -1171,38 +1202,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("✔️ بررسی شد", callback_data=f"report_resolve:{rep_id}"),
                 InlineKeyboardButton("❌ حذف", callback_data=f"report_cancel:{rep_id}")
             ]
-        ])
-        await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return
-
-    # --------------------------------------
-    # TIC-TAC-TOE / بازی دوز
-    # --------------------------------------
-    if clean_raw in ["دوز", "گودی دوز", "گودی دوز بزار"]:
-        game_id = f"{chat_id}_{update.message.message_id}"
-        if "xo_games" not in db: db["xo_games"] = {}
-        
-        db["xo_games"][game_id] = {
-            "host_id": user_id,
-            "p1_id": None,
-            "p1_name": None,
-            "p2_id": None,
-            "p2_name": None,
-            "board": [None] * 9,
-            "turn": None,
-            "status": "waiting"
-        }
-        mark_db_dirty()
-        save_db()
-
-        txt = (
-            '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
-            '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798294298943">⏳</tg-emoji></b>\n\n'
-            '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
-        )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
-            [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
         ])
         await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
@@ -1223,7 +1222,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
             "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
             "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
+            "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞ nuclear⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
             "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
             "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
             "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
