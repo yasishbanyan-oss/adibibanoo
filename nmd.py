@@ -462,7 +462,7 @@ def build_xo_keyboard(game_id: str, board: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 # ==========================================
-# DWOZ / TIC-TAC-TOE INDEPENDENT LOGIC (بدون پریمیوم)
+# DWOZ / TIC-TAC-TOE INDEPENDENT LOGIC
 # ==========================================
 async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -531,7 +531,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Coming soon..!", show_alert=True)
         return
 
-    # ۲. دوز آنلاین
+    # ۲. دوز آنلاین (با ثبت کامل اسامی)
     elif data.startswith("xo_"):
         parts = data.split(":")
         act = parts[0]
@@ -551,7 +551,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             del games[game_id]
             mark_db_dirty()
             save_db()
-            await query.message.edit_text('<b>حله! هروقت خواستید من اینجام تا راوی رقابت شما باشم! <tg-emoji emoji-id="5816531766382436821">🛠</tg-emoji></b>', parse_mode=ParseMode.HTML)
+            await query.message.edit_text('<b>حله! هروقت خواستید من اینجام تا راوی رقابت شما باشم! 🛠</b>', parse_mode=ParseMode.HTML)
             return
 
         elif act == "xo_leave":
@@ -561,7 +561,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             del games[game_id]
             mark_db_dirty()
             save_db()
-            await query.message.edit_text('<b>حله! هروقت خواستید من اینجام تا راوی رقابت شما باشم! <tg-emoji emoji-id="5816531766382436821">🛠</tg-emoji></b>', parse_mode=ParseMode.HTML)
+            await query.message.edit_text('<b>حله! هروقت خواستید من اینجام تا راوی رقابت شما باشم! 🛠</b>', parse_mode=ParseMode.HTML)
             return
 
         elif act == "xo_join":
@@ -578,10 +578,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
                 m1 = get_user_mention(user_id, query.from_user.full_name)
                 txt = (
-                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
-                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798294298943">⏳</tg-emoji></b>\n\n'
+                    '<b>⚡️ میبینم به یکم هیجان نیاز دارین! 😻</b>\n\n'
+                    '<b>آماده بازی دوز هستین بچهااااا؟ ⏳</b>\n\n'
                     f'<b>شرکت کنندگان :</b>\n<b>{m1}</b>\n\n'
-                    '<b>- یک نفر دیگه تموممممه! کسی نبودد؟ <tg-emoji emoji-id="5431776939465516694">🔥</tg-emoji></b>\n'
+                    '<b>- یک نفر دیگه تموممممه! کسی نبودد؟ 🔥</b>\n'
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
@@ -601,10 +601,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 m1 = get_user_mention(game["p1_id"], game["p1_name"])
                 m2 = get_user_mention(game["p2_id"], game["p2_name"])
                 txt = (
-                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
-                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798294298902">⏳</tg-emoji></b>\n\n'
+                    '<b>⚡️ میبینم به یکم هیجان نیاز دارین! 😻</b>\n\n'
+                    '<b>آماده بازی دوز هستین بچهااااا؟ ⏳</b>\n\n'
                     f'<b>شرکت کنندگان :</b>\n<b>{m1}</b>\n<b>{m2}</b>\n\n'
-                    '<b><tg-emoji emoji-id="5474531397571986677">🚬</tg-emoji> اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
+                    '<b>🚬 اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
                 )
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("شروع بازی 🎮", callback_data=f"xo_start:{game_id}")]
@@ -623,7 +623,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             mark_db_dirty()
             save_db()
 
-            txt = '<b>بازی شروع شد! ببینیم برنده میدان کیه! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>'
+            txt = '<b>بازی شروع شد! ببینیم برنده میدان کیه! 🕹</b>'
             kb = build_xo_keyboard(game_id, game["board"])
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             return
@@ -661,7 +661,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 if winner_symbol == "draw":
                     res_txt = (
                         '<b>اوووه! میبینم که بازی تموم شده!</b>\n'
-                        '<b>- ای بابا حیف شد ، دو طرف خیلی قوی بودن و بازی مساوی شد. <tg-emoji emoji-id="5870693988339553767">🦸‍♀️</tg-emoji></b>'
+                        '<b>- ای بابا حیف شد ، دو طرف خیلی قوی بودن و بازی مساوی شد. 🦸‍♀️</b>'
                     )
                 else:
                     winner_id = game["p1_id"] if winner_symbol == "O" else game["p2_id"]
@@ -669,7 +669,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     w_mention = get_user_mention(winner_id, winner_name)
                     res_txt = (
                         '<b>اوووه! میبینم که بازی تموم شده!</b>\n'
-                        f'<b>- بازی با برتری بازیکن {w_mention} به اتمام رسید. <tg-emoji emoji-id="5866225658983617570">😈</tg-emoji></b>'
+                        f'<b>- بازی با برتری بازیکن {w_mention} به اتمام رسید. 😈</b>'
                     )
 
                 try:
@@ -1241,9 +1241,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⡿⠁⠄⣳⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿ military⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
