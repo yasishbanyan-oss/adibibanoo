@@ -993,6 +993,43 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ شما در حالت تنظیم اسامی قرار ندارید.")
 
 # ==========================================
+# DWOZ / TIC-TAC-TOE TRIGGER FUNCTION
+# ==========================================
+async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    db = load_db()
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    game_id = f"{chat_id}_{update.message.message_id}"
+    if "xo_games" not in db: db["xo_games"] = {}
+    
+    db["xo_games"][game_id] = {
+        "host_id": user_id,
+        "p1_id": None,
+        "p1_name": None,
+        "p2_id": None,
+        "p2_name": None,
+        "board": [None] * 9,
+        "turn": None,
+        "status": "waiting"
+    }
+    mark_db_dirty()
+    save_db()
+
+    txt = (
+        '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+        '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798294298943">⏳</tg-emoji></b>\n\n'
+        '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
+        [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
+    ])
+    await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+# ==========================================
 # MESSAGE HANDLER
 # ==========================================
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1009,38 +1046,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     raw_text = update.message.text or ""
     clean_raw = raw_text.strip().lower()
-
-    # --------------------------------------
-    # 💥 TIC-TAC-TOE / بازی دوز (مستقیم در صدر دستورات)
-    # --------------------------------------
-    if clean_raw in ["دوز", "گودی دوز", "گودی دوز بزار"] or "دوز" in clean_raw.split():
-        game_id = f"{chat_id}_{update.message.message_id}"
-        if "xo_games" not in db: db["xo_games"] = {}
-        
-        db["xo_games"][game_id] = {
-            "host_id": user_id,
-            "p1_id": None,
-            "p1_name": None,
-            "p2_id": None,
-            "p2_name": None,
-            "board": [None] * 9,
-            "turn": None,
-            "status": "waiting"
-        }
-        mark_db_dirty()
-        save_db()
-
-        txt = (
-            '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
-            '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798294298943">⏳</tg-emoji></b>\n\n'
-            '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
-        )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
-            [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
-        ])
-        await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return
 
     # --------------------------------------
     # TEXT COMMAND 'پنل'
@@ -1214,11 +1219,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
             "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
             "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⣿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
+            "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿ military⠖⠄⣿⣿⣿⣿⣿\n"
             "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
             "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
             "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
+            "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
             "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
             "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
             "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
@@ -1783,6 +1788,10 @@ def main():
     app.add_handler(CommandHandler("panel", command_panel))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
+
+    # 🎯 هاندر مستقیم و اختصاصی برای بازی دوز
+    app.add_handler(MessageHandler(filters.Regex(r"^(دوز|گودی دوز|گودی دوز بزار)$"), start_dwoz_game))
+
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_messages))
     app.add_error_handler(global_error_handler)
 
