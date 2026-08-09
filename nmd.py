@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 import threading
+import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -72,6 +73,19 @@ DODOL_PATTERN = re.compile(
     r"(دولتو|دودولتو|شومبولتو|کیرتو|دولتو|دودولت|دول|شومبول|کیر)\s*(ببینم|نشون بده|نشون بپوش|بده|ببینیم)",
     re.IGNORECASE
 )
+
+# الگوی هوشمند و مقاوم برای تشخیص دستور بازی دوز
+DWOZ_PATTERN = re.compile(
+    r"^\s*(?:گودی\s+)?دوز(?:\s+بزار|\s+بذار|\s+کن)?\s*$",
+    re.IGNORECASE
+)
+
+def is_dwoz_trigger(text: str) -> bool:
+    if not text:
+        return False
+    clean = text.strip().replace("\u200c", " ")
+    clean = re.sub(r"[؟?\.,!؛\-_]", "", clean).strip()
+    return bool(DWOZ_PATTERN.match(clean)) or clean in ["دوز", "گودی دوز", "گودی دوز بزار", "گودی دوز بذار", "بازی دوز"]
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -479,7 +493,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         act = parts[0]
         game_id = parts[1]
         
-        games = db.get("xo_games", {})
+        games = db.setdefault("xo_games", {})
         if game_id not in games:
             await query.answer("این بازی به اتمام رسیده است.", show_alert=True)
             return
@@ -998,36 +1012,42 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-    db = load_db()
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    
-    game_id = f"{chat_id}_{update.message.message_id}"
-    if "xo_games" not in db: db["xo_games"] = {}
-    
-    db["xo_games"][game_id] = {
-        "host_id": user_id,
-        "p1_id": None,
-        "p1_name": None,
-        "p2_id": None,
-        "p2_name": None,
-        "board": [None] * 9,
-        "turn": None,
-        "status": "waiting"
-    }
-    mark_db_dirty()
-    save_db()
+    try:
+        db = load_db()
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        
+        logger.info(f"Executing start_dwoz_game for user={user_id} in chat={chat_id}")
 
-    txt = (
-        '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
-        '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798294298943">⏳</tg-emoji></b>\n\n'
-        '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
-    )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
-        [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
-    ])
-    await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+        game_id = f"{chat_id}_{update.message.message_id}"
+        if "xo_games" not in db:
+            db["xo_games"] = {}
+        
+        db["xo_games"][game_id] = {
+            "host_id": user_id,
+            "p1_id": None,
+            "p1_name": None,
+            "p2_id": None,
+            "p2_name": None,
+            "board": [None] * 9,
+            "turn": None,
+            "status": "waiting"
+        }
+        mark_db_dirty()
+        save_db()
+
+        txt = (
+            '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+            '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798294298943">⏳</tg-emoji></b>\n\n'
+            '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
+            [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
+        ])
+        await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+    except Exception:
+        logger.exception("Error in start_dwoz_game:")
 
 # ==========================================
 # MESSAGE HANDLER
@@ -1036,735 +1056,753 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    db = load_db()
-    await register_member(update, db)
-    
-    if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
-        setup_chat_jobs(context.job_queue, [update.effective_chat.id])
+    try:
+        db = load_db()
+        await register_member(update, db)
+        
+        if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
+            setup_chat_jobs(context.job_queue, [update.effective_chat.id])
 
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    raw_text = update.message.text or ""
-    clean_raw = raw_text.strip().lower()
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        raw_text = update.message.text or ""
+        clean_raw = raw_text.strip().lower()
+        norm_text = normalize_text(raw_text)
 
-    # --------------------------------------
-    # TEXT COMMAND 'پنل'
-    # --------------------------------------
-    if clean_raw == "پنل" and await is_admin_or_owner(context, chat_id, user_id):
-        await command_panel(update, context)
-        return
+        # --------------------------------------
+        # TRACE LOGGING FOR DEBUGGING
+        # --------------------------------------
+        logger.info(f"[TRACE] user={user_id} chat={chat_id} | raw_text='{raw_text}' | clean_raw='{clean_raw}' | norm_text='{norm_text}'")
 
-    # --------------------------------------
-    # ADMIN WAITING STATES
-    # --------------------------------------
-    if await is_admin_or_owner(context, chat_id, user_id):
-        if user_id in db["states"].get("waiting_broadcast_msg", {}):
-            target_cid = db["states"]["waiting_broadcast_msg"][user_id]
-            del db["states"]["waiting_broadcast_msg"][user_id]
-            mark_db_dirty()
-            save_db(force=True)
-            try:
-                sent = await context.bot.send_message(
-                    chat_id=target_cid,
-                    text=update.message.text or "",
-                    entities=update.message.entities
-                )
+        # --------------------------------------
+        # 💥 CHECK DWOZ FIRST (مستقیم و اولویت مطلق)
+        # --------------------------------------
+        logger.info("Reached XO trigger check")
+        if is_dwoz_trigger(raw_text) or is_dwoz_trigger(clean_raw) or is_dwoz_trigger(norm_text):
+            logger.info("XO trigger matched")
+            await start_dwoz_game(update, context)
+            return
+
+        # --------------------------------------
+        # TEXT COMMAND 'پنل'
+        # --------------------------------------
+        if clean_raw == "پنل" and await is_admin_or_owner(context, chat_id, user_id):
+            await command_panel(update, context)
+            return
+
+        # --------------------------------------
+        # ADMIN WAITING STATES
+        # --------------------------------------
+        if await is_admin_or_owner(context, chat_id, user_id):
+            if user_id in db["states"].get("waiting_broadcast_msg", {}):
+                target_cid = db["states"]["waiting_broadcast_msg"][user_id]
+                del db["states"]["waiting_broadcast_msg"][user_id]
+                mark_db_dirty()
+                save_db(force=True)
                 try:
-                    await context.bot.pin_chat_message(chat_id=target_cid, message_id=sent.message_id)
-                except Exception:
-                    logger.warning("Bot does not have pin rights in target chat, skipping pin.")
-                await update.message.reply_text("✅ پیام همگانی با موفقیت ارسال شد.")
-            except Exception as e:
-                await update.message.reply_text(f"❌ خطا در ارسال پیام همگانی: {e}")
+                    sent = await context.bot.send_message(
+                        chat_id=target_cid,
+                        text=update.message.text or "",
+                        entities=update.message.entities
+                    )
+                    try:
+                        await context.bot.pin_chat_message(chat_id=target_cid, message_id=sent.message_id)
+                    except Exception:
+                        logger.warning("Bot does not have pin rights in target chat, skipping pin.")
+                    await update.message.reply_text("✅ پیام همگانی با موفقیت ارسال شد.")
+                except Exception as e:
+                    await update.message.reply_text(f"❌ خطا در ارسال پیام همگانی: {e}")
+                return
+
+            if user_id in db["states"].get("waiting_lef_media", []):
+                media = None
+                if update.message.sticker: media = {"type": "sticker", "file_id": update.message.sticker.file_id}
+                elif update.message.photo: media = {"type": "photo", "file_id": update.message.photo[-1].file_id}
+                elif update.message.animation: media = {"type": "animation", "file_id": update.message.animation.file_id}
+                elif update.message.video: media = {"type": "video", "file_id": update.message.video.file_id}
+                    
+                if media:
+                    db["media_lef"] = media
+                    db["states"]["waiting_lef_media"].remove(user_id)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    await update.message.reply_text("✅ رسانه لف ذخیره شد.")
+                    return
+
+            if user_id in db["states"].get("waiting_add_food", []):
+                if raw_text:
+                    food_item = raw_text.strip()
+                    if food_item.lower() in [f.strip().lower() for f in db["foods"]]:
+                        await update.message.reply_text("❌ این غذا قبلاً وجود داشته!")
+                    else:
+                        db["foods"].append(food_item)
+                        await update.message.reply_text(f"✅ «{food_item}» اضافه شد.")
+                    db["states"]["waiting_add_food"].remove(user_id)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    return
+
+            if user_id in db["states"].get("waiting_del_food", []):
+                if raw_text:
+                    food_item = raw_text.strip()
+                    target_idx = next((i for i, f in enumerate(db["foods"]) if f.strip().lower() == food_item.lower()), None)
+                    if target_idx is not None:
+                        rm = db["foods"].pop(target_idx)
+                        await update.message.reply_text(f"✅ «{rm}» حذف شد.")
+                    else:
+                        await update.message.reply_text("❌ این غذا یافت نشد!")
+                    db["states"]["waiting_del_food"].remove(user_id)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    return
+
+            if user_id in db["states"].get("waiting_cooldown", []):
+                if raw_text and raw_text.isdigit():
+                    val = int(raw_text)
+                    if val > 0:
+                        db["cooldown_minutes"] = val
+                        await update.message.reply_text(f"✅ زمان محدودیت با موفقیت روی <b>{val} دقیقه</b> تنظیم شد.", parse_mode=ParseMode.HTML)
+                    db["states"]["waiting_cooldown"].remove(user_id)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    return
+
+            if user_id in db["states"].get("waiting_poem_names", []):
+                if raw_text and not raw_text.startswith("/"):
+                    name_item = raw_text.strip()
+                    if "custom_names" not in db: db["custom_names"] = []
+                    db["custom_names"].append(name_item)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    await update.message.reply_text(f"✅ اسم «{name_item}» ثبت شد. اسم بعدی را بفرستید یا /done را بزنید.")
+                    return
+
+            if user_id in db["states"].get("waiting_add_poem", []):
+                if raw_text and not raw_text.startswith("/"):
+                    poem_item = raw_text.strip().replace("یوزرنیم", "{name}")
+                    if "poems" not in db: db["poems"] = []
+                    db["poems"].append(poem_item)
+                    db["states"]["waiting_add_poem"].remove(user_id)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    await update.message.reply_text("✅ شعر جدید با موفقیت اضافه شد.")
+                    return
+
+        features = db.get("features", {})
+
+        # --------------------------------------
+        # HELP / راهنما PANEL
+        # --------------------------------------
+        help_triggers = [
+            "راهنما", "/help", "گودی راهنما", "گودی معرفی کن", 
+            "گودی چیا بلدی؟", "چیا بلدی؟", "چیا بلدی", "گودی چیا بلدی"
+        ]
+        if clean_raw in help_triggers:
+            txt = (
+                '<b>سلام عزیزم به ربات من خوش اومدی! <tg-emoji emoji-id="5352750090974929602">😍</tg-emoji></b>\n\n'
+                '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه میمون کوچولو هست آشنا بشی! <tg-emoji emoji-id="5413391520206169048">🐻</tg-emoji></b>\n'
+                '<b>- برخی از دستورات بدون ادمین بودن کار می‌کنند ولی برخی دیگر نیازمند دسترسی مدیریت هستند.</b>'
+            )
+            kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun"),
+                    InlineKeyboardButton("راهنمای بی ادبی", callback_data="help_rude")
+                ],
+                [
+                    InlineKeyboardButton("راهنمای کاربردی", callback_data="help_useful"),
+                    InlineKeyboardButton("راهنمای مدیریت ربات", callback_data="help_admin")
+                ]
+            ])
+            await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             return
 
-        if user_id in db["states"].get("waiting_lef_media", []):
-            media = None
-            if update.message.sticker: media = {"type": "sticker", "file_id": update.message.sticker.file_id}
-            elif update.message.photo: media = {"type": "photo", "file_id": update.message.photo[-1].file_id}
-            elif update.message.animation: media = {"type": "animation", "file_id": update.message.animation.file_id}
-            elif update.message.video: media = {"type": "video", "file_id": update.message.video.file_id}
-                
-            if media:
-                db["media_lef"] = media
-                db["states"]["waiting_lef_media"].remove(user_id)
-                mark_db_dirty()
-                save_db(force=True)
-                await update.message.reply_text("✅ رسانه لف ذخیره شد.")
-                return
-
-        if user_id in db["states"].get("waiting_add_food", []):
-            if raw_text:
-                food_item = raw_text.strip()
-                if food_item.lower() in [f.strip().lower() for f in db["foods"]]:
-                    await update.message.reply_text("❌ این غذا قبلاً وجود داشته!")
-                else:
-                    db["foods"].append(food_item)
-                    await update.message.reply_text(f"✅ «{food_item}» اضافه شد.")
-                db["states"]["waiting_add_food"].remove(user_id)
-                mark_db_dirty()
-                save_db(force=True)
-                return
-
-        if user_id in db["states"].get("waiting_del_food", []):
-            if raw_text:
-                food_item = raw_text.strip()
-                target_idx = next((i for i, f in enumerate(db["foods"]) if f.strip().lower() == food_item.lower()), None)
-                if target_idx is not None:
-                    rm = db["foods"].pop(target_idx)
-                    await update.message.reply_text(f"✅ «{rm}» حذف شد.")
-                else:
-                    await update.message.reply_text("❌ این غذا یافت نشد!")
-                db["states"]["waiting_del_food"].remove(user_id)
-                mark_db_dirty()
-                save_db(force=True)
-                return
-
-        if user_id in db["states"].get("waiting_cooldown", []):
-            if raw_text and raw_text.isdigit():
-                val = int(raw_text)
-                if val > 0:
-                    db["cooldown_minutes"] = val
-                    await update.message.reply_text(f"✅ زمان محدودیت با موفقیت روی <b>{val} دقیقه</b> تنظیم شد.", parse_mode=ParseMode.HTML)
-                db["states"]["waiting_cooldown"].remove(user_id)
-                mark_db_dirty()
-                save_db(force=True)
-                return
-
-        if user_id in db["states"].get("waiting_poem_names", []):
-            if raw_text and not raw_text.startswith("/"):
-                name_item = raw_text.strip()
-                if "custom_names" not in db: db["custom_names"] = []
-                db["custom_names"].append(name_item)
-                mark_db_dirty()
-                save_db(force=True)
-                await update.message.reply_text(f"✅ اسم «{name_item}» ثبت شد. اسم بعدی را بفرستید یا /done را بزنید.")
-                return
-
-        if user_id in db["states"].get("waiting_add_poem", []):
-            if raw_text and not raw_text.startswith("/"):
-                poem_item = raw_text.strip().replace("یوزرنیم", "{name}")
-                if "poems" not in db: db["poems"] = []
-                db["poems"].append(poem_item)
-                db["states"]["waiting_add_poem"].remove(user_id)
-                mark_db_dirty()
-                save_db(force=True)
-                await update.message.reply_text("✅ شعر جدید با موفقیت اضافه شد.")
-                return
-
-    features = db.get("features", {})
-    norm_text = normalize_text(raw_text)
-
-    # --------------------------------------
-    # HELP / راهنما PANEL
-    # --------------------------------------
-    help_triggers = [
-        "راهنما", "/help", "گودی راهنما", "گودی معرفی کن", 
-        "گودی چیا بلدی؟", "چیا بلدی؟", "چیا بلدی", "گودی چیا بلدی"
-    ]
-    if clean_raw in help_triggers:
-        txt = (
-            '<b>سلام عزیزم به ربات من خوش اومدی! <tg-emoji emoji-id="5352750090974929602">😍</tg-emoji></b>\n\n'
-            '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه میمون کوچولو هست آشنا بشی! <tg-emoji emoji-id="5413391520206169048">🐻</tg-emoji></b>\n'
-            '<b>- برخی از دستورات بدون ادمین بودن کار می‌کنند ولی برخی دیگر نیازمند دسترسی مدیریت هستند.</b>'
-        )
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun"),
-                InlineKeyboardButton("راهنمای بی ادبی", callback_data="help_rude")
-            ],
-            [
-                InlineKeyboardButton("راهنمای کاربردی", callback_data="help_useful"),
-                InlineKeyboardButton("راهنمای مدیریت ربات", callback_data="help_admin")
-            ]
-        ])
-        await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return
-
-    # --------------------------------------
-    # REPORT SYSTEM / سیستم گزارش
-    # --------------------------------------
-    if clean_raw in ["گزارش", "report"] and update.message.reply_to_message:
-        rep_id = f"{chat_id}_{update.message.message_id}"
-        if "reports" not in db: db["reports"] = {}
-        db["reports"][rep_id] = {
-            "reporter_id": user_id,
-            "target_msg_id": update.message.reply_to_message.message_id
-        }
-        mark_db_dirty()
-        save_db()
-
-        admin_mentions = ""
-        try:
-            admins = await context.bot.get_chat_administrators(chat_id)
-            admin_mentions = "".join([f'<a href="tg://user?id={a.user.id}">&#8203;</a>' for a in admins if not a.user.is_bot])
-        except Exception:
-            pass
-
-        txt = f'<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> گزارش شما برای مدیران گروه ارسال شد!</b>{admin_mentions}'
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✔️ بررسی شد", callback_data=f"report_resolve:{rep_id}"),
-                InlineKeyboardButton("❌ حذف", callback_data=f"report_cancel:{rep_id}")
-            ]
-        ])
-        await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return
-
-    # --------------------------------------
-    # DODOL / FUN RESPONSE
-    # --------------------------------------
-    if DODOL_PATTERN.search(raw_text):
-        ascii_penis = (
-            "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿ military⠖⠄⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
-            "⣿⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿\n"
-            "⣿⣿⠛⠉⠁⠄⢕⡳⣽⡾⣿⢽⣯⡿⣮⢚⣅⠹⣿⣿⣿\n"
-            "⡿⠋⠄⠄⠄⠄⢀⠒⠝⣞⢿⡿⣿⣽⢿⡽⣧⣳⡅⠌⠻⣿\n"
-            "⠁⠄⠄⠄⠄⠄⠐⡐⠱⡱⣻⡻⣝⣮⣟⣿⣿⣿⣿⣿⣿⣿"
-        )
-        msg1 = await update.message.reply_text(f"<code>{ascii_penis}</code>", parse_mode=ParseMode.HTML)
-        await msg1.reply_text('<b>میخوریش برام؟؟ <tg-emoji emoji-id="5431423351987916271">👅</tg-emoji></b>', parse_mode=ParseMode.HTML)
-        return
-
-    # --------------------------------------
-    # BOT NAME RESPONSES
-    # --------------------------------------
-    is_reply_to_bot = (
-        update.message.reply_to_message and 
-        update.message.reply_to_message.from_user and 
-        update.message.reply_to_message.from_user.id == context.bot.id
-    )
-
-    if is_reply_to_bot and clean_raw in ["تو کی هستی", "تو کی هستی؟"]:
-        await update.message.reply_text('<b>من گودی هستم خوشگله! </b><tg-emoji emoji-id="5321415182109401472">😽</tg-emoji>', parse_mode=ParseMode.HTML)
-        return
-
-    elif is_reply_to_bot and clean_raw in ["گودی", "گودی؟"]:
-        await update.message.reply_text('<b>بله خودم هستم چیکارم دارین؟ </b><tg-emoji emoji-id="5276088141671846201">🌟</tg-emoji>', parse_mode=ParseMode.HTML)
-        return
-
-    # --------------------------------------
-    # ACTION REGISTRATION SYSTEM
-    # --------------------------------------
-    action_type = None
-    if any(k in clean_raw for k in ["ثبت گوه خوری", "ثبت گوهخوری"]): action_type = "goh_khori"
-    elif any(k in clean_raw for k in ["ثبت کصلیسی", "ثبت کص لیسی"]): action_type = "kos_lisi"
-    elif any(k in clean_raw for k in ["ثبت خایمالی", "ثبت خایه مالی"]): action_type = "khaymali"
-    elif any(k in clean_raw for k in ["ثبت کصخلی", "ثبت کص خلی"]): action_type = "kos_khali"
-    elif any(k in clean_raw for k in ["ثبت جندگی", "ثبت جنده گی"]): action_type = "jendegi"
-
-    if action_type:
-        if not update.message.reply_to_message:
-            await update.message.reply_text("<b>❌ برای ثبت باید روی پیام یک نفر ریپلای کنی!</b>", parse_mode=ParseMode.HTML)
-            return
-
-        target_user = update.message.reply_to_message.from_user
-        if target_user:
-            if target_user.id == context.bot.id:
-                await update.message.reply_text('<b><tg-emoji emoji-id="6041764253726150869">😐</tg-emoji> خیلی کارت زشت بود!</b>', parse_mode=ParseMode.HTML)
-                return
-            
-            if target_user.id == user_id:
-                await update.message.reply_text('<b><tg-emoji emoji-id="6044308162855571406">😒</tg-emoji> داری سعی میکنی روی خودت انجام بدی؟ خود درگیری داری مگه داداش!</b>', parse_mode=ParseMode.HTML)
-                return
-
-            action_configs = {
-                "goh_khori": {
-                    "title": "گوه‌خوری",
-                    "stat_key": "goh_khori",
-                    "icon_id": "5819051035284479206",
-                    "funny_text": "گوه‌خوری نوین مشاهده شد!"
-                },
-                "kos_lisi": {
-                    "title": "کصلیسی",
-                    "stat_key": "kos_lisi",
-                    "icon_id": "5832692422647226240",
-                    "funny_text": "مدال شجاعت کصلیسی تعلق گرفت!"
-                },
-                "khaymali": {
-                    "title": "خایمالی",
-                    "stat_key": "khaymali",
-                    "icon_id": "5920300405341820405",
-                    "funny_text": "خایمال‌نامه جدید صادر شد!"
-                },
-                "kos_khali": {
-                    "title": "کصخلی",
-                    "stat_key": "kos_khali",
-                    "icon_id": "5443038326535759644",
-                    "funny_text": "پرونده پزشکی کصخلی تنظیم شد!"
-                },
-                "jendegi": {
-                    "title": "جندگی",
-                    "stat_key": "jendegi",
-                    "icon_id": "4974615079971455718",
-                    "funny_text": "ثبت جندگی جدید در سیستم با موفقیت ثبت شد!"
-                }
-            }
-            cfg = action_configs[action_type]
-            rec_id = f"{chat_id}_{update.message.message_id}"
-            
-            increment_user_stat(db, target_user.id, cfg["stat_key"])
-
-            if "action_records" not in db: db["action_records"] = {}
-            db["action_records"][rec_id] = {
-                "target_id": target_user.id,
-                "target_name": target_user.full_name,
-                "creator_id": user_id,
-                "creator_name": update.effective_user.full_name,
-                "action_title": cfg["title"],
-                "stat_key": cfg["stat_key"],
-                "funny_text": cfg["funny_text"],
-                "signers": []
+        # --------------------------------------
+        # REPORT SYSTEM / سیستم گزارش
+        # --------------------------------------
+        if clean_raw in ["گزارش", "report"] and update.message.reply_to_message:
+            rep_id = f"{chat_id}_{update.message.message_id}"
+            if "reports" not in db: db["reports"] = {}
+            db["reports"][rep_id] = {
+                "reporter_id": user_id,
+                "target_msg_id": update.message.reply_to_message.message_id
             }
             mark_db_dirty()
             save_db()
 
-            target_mention = get_user_mention(target_user.id, target_user.full_name)
-            creator_mention = get_user_mention(user_id, update.effective_user.full_name)
+            admin_mentions = ""
+            try:
+                admins = await context.bot.get_chat_administrators(chat_id)
+                admin_mentions = "".join([f'<a href="tg://user?id={a.user.id}">&#8203;</a>' for a in admins if not a.user.is_bot])
+            except Exception:
+                pass
 
-            init_msg = (
-                f"<b>{cfg['title']} {target_mention} با موفقیت ثبت شد! <tg-emoji emoji-id=\"5206607081334906820\">✔️</tg-emoji></b>\n"
-                f"<b>ثبت کننده {cfg['title']}: {creator_mention} <tg-emoji emoji-id=\"4956745198521549627\">🌟</tg-emoji></b>\n"
-                f"<b><tg-emoji emoji-id=\"5803348359972393936\">⚙️</tg-emoji> در انتظار امضای شاهدان...</b>\n\n"
-                f"<b>{cfg['funny_text']} <tg-emoji emoji-id=\"{cfg['icon_id']}\">🔥</tg-emoji></b>"
-            )
-
+            txt = f'<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> گزارش شما برای مدیران گروه ارسال شد!</b>{admin_mentions}'
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✍️ امضای شاهدان (۰)", callback_data=f"sign_action:{rec_id}")],
-                [InlineKeyboardButton(f"📊 آمار کل {cfg['title']} این کاربر", callback_data=f"stat_action:{rec_id}")]
+                [
+                    InlineKeyboardButton("✔️ بررسی شد", callback_data=f"report_resolve:{rep_id}"),
+                    InlineKeyboardButton("❌ حذف", callback_data=f"report_cancel:{rep_id}")
+                ]
             ])
-
-            await update.message.reply_text(init_msg, reply_markup=kb, parse_mode=ParseMode.HTML)
+            await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             return
 
-    # --------------------------------------
-    # STATS & OVERALL USER STATUS
-    # --------------------------------------
-    is_asking_own_stats = clean_raw in ["آمارم", "آمار من", "وضعیت من"]
-    is_asking_other_stats = clean_raw in ["اوضاع این", "اوضاعش", "آمار این", "وضعیت این", "وضعیت"] and update.message.reply_to_message
+        # --------------------------------------
+        # DODOL / FUN RESPONSE
+        # --------------------------------------
+        if DODOL_PATTERN.search(raw_text):
+            ascii_penis = (
+                "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄ party⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢸⢽⣿ military⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿\n"
+                "⣿⣿⠛⠉⠁⠄⢕⡳⣽⡾⣿⢽⣯⡿⣮⢚⣅⠹⣿⣿⣿\n"
+                "⡿⠋⠄⠄⠄⠄⢀⠒⠝⣞⢿⡿⣿⣽⢿⡽⣧⣳⡅⠌⠻⣿\n"
+                "⠁⠄⠄⠄⠄⠄⠐⡐⠱⡱⣻⡻⣝⣮⣟⣿⣿⣿⣿⣿⣿⣿"
+            )
+            msg1 = await update.message.reply_text(f"<code>{ascii_penis}</code>", parse_mode=ParseMode.HTML)
+            await msg1.reply_text('<b>میخوریش برام؟؟ <tg-emoji emoji-id="5431423351987916271">👅</tg-emoji></b>', parse_mode=ParseMode.HTML)
+            return
 
-    if is_asking_own_stats or is_asking_other_stats:
-        if is_asking_own_stats:
-            target_id = user_id
-            header_str = '<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار شما به شرح ذیل می‌باشد :</b>\n\n'
-        else:
+        # --------------------------------------
+        # BOT NAME RESPONSES
+        # --------------------------------------
+        is_reply_to_bot = (
+            update.message.reply_to_message and 
+            update.message.reply_to_message.from_user and 
+            update.message.reply_to_message.from_user.id == context.bot.id
+        )
+
+        if is_reply_to_bot and clean_raw in ["تو کی هستی", "تو کی هستی؟"]:
+            await update.message.reply_text('<b>من گودی هستم خوشگله! </b><tg-emoji emoji-id="5321415182109401472">😽</tg-emoji>', parse_mode=ParseMode.HTML)
+            return
+
+        elif is_reply_to_bot and clean_raw in ["گودی", "گودی؟"]:
+            await update.message.reply_text('<b>بله خودم هستم چیکارم دارین؟ </b><tg-emoji emoji-id="5276088141671846201">🌟</tg-emoji>', parse_mode=ParseMode.HTML)
+            return
+
+        # --------------------------------------
+        # ACTION REGISTRATION SYSTEM
+        # --------------------------------------
+        action_type = None
+        if any(k in clean_raw for k in ["ثبت گوه خوری", "ثبت گوهخوری"]): action_type = "goh_khori"
+        elif any(k in clean_raw for k in ["ثبت کصلیسی", "ثبت کص لیسی"]): action_type = "kos_lisi"
+        elif any(k in clean_raw for k in ["ثبت خایمالی", "ثبت خایه مالی"]): action_type = "khaymali"
+        elif any(k in clean_raw for k in ["ثبت کصخلی", "ثبت کص خلی"]): action_type = "kos_khali"
+        elif any(k in clean_raw for k in ["ثبت جندگی", "ثبت جنده گی"]): action_type = "jendegi"
+
+        if action_type:
+            if not update.message.reply_to_message:
+                await update.message.reply_text("<b>❌ برای ثبت باید روی پیام یک نفر ریپلای کنی!</b>", parse_mode=ParseMode.HTML)
+                return
+
             target_user = update.message.reply_to_message.from_user
-            target_id = target_user.id
-            header_str = f'<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار {get_user_mention(target_id, target_user.full_name)} به شرح ذیل می‌باشد :</b>\n\n'
+            if target_user:
+                if target_user.id == context.bot.id:
+                    await update.message.reply_text('<b><tg-emoji emoji-id="6041764253726150869">😐</tg-emoji> خیلی کارت زشت بود!</b>', parse_mode=ParseMode.HTML)
+                    return
+                
+                if target_user.id == user_id:
+                    await update.message.reply_text('<b><tg-emoji emoji-id="6044308162855571406">😒</tg-emoji> داری سعی میکنی روی خودت انجام بدی؟ خود درگیری داری مگه داداش!</b>', parse_mode=ParseMode.HTML)
+                    return
 
-        stats_msg = (
-            f"{header_str}"
-            f'<b><tg-emoji emoji-id="5433681959324754801">💩</tg-emoji> تعداد گوه‌خوری : {get_user_stat(db, target_id, "goh_khori")}</b>\n'
-            f'<b><tg-emoji emoji-id="5863828384332647680">👅</tg-emoji> تعداد کصلیسی : {get_user_stat(db, target_id, "kos_lisi")}</b>\n'
-            f'<b><tg-emoji emoji-id="5429327730070009271">🤲</tg-emoji> تعداد خایمالی : {get_user_stat(db, target_id, "khaymali")}</b>\n'
-            f'<b><tg-emoji emoji-id="5983342699816685361">👑</tg-emoji> تعداد جندگی : {get_user_stat(db, target_id, "jendegi")}</b>\n'
-            f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> تعداد کصخلی : {get_user_stat(db, target_id, "kos_khali")}</b>\n'
-            f'<b><tg-emoji emoji-id="5195297917048462460">🍌</tg-emoji> تعداد جقی بودن : {get_user_stat(db, target_id, "jaghi")}</b>\n'
-            f'<b><tg-emoji emoji-id="5922483378304586599">🐙</tg-emoji> تعداد کونی بودن : {get_user_stat(db, target_id, "koni")}</b>\n'
-            f'<b><tg-emoji emoji-id="5314297755579986373">😊</tg-emoji> تعداد سکسی شدن : {get_user_stat(db, target_id, "sexy")}</b>\n'
-            f'<b><tg-emoji emoji-id="5771442740147523468">❤️</tg-emoji> تعداد جذاب شدن : {get_user_stat(db, target_id, "jazab")}</b>\n'
-            f'<b><tg-emoji emoji-id="5283151000641757020">😎</tg-emoji> تعداد خوژتیپ شدن : {get_user_stat(db, target_id, "handsome")}</b>\n'
-            f'<b><tg-emoji emoji-id="5406926593698312391">❤️</tg-emoji> تعداد کاپل شدن : {get_user_stat(db, target_id, "ship")}</b>\n'
-            f'<b><tg-emoji emoji-id="5854843712181378616">🏆</tg-emoji> تعداد پر حرف بودن : {get_user_stat(db, target_id, "goh_khor_hour")}</b>'
-        )
-        await update.message.reply_text(stats_msg, parse_mode=ParseMode.HTML)
-        return
+                action_configs = {
+                    "goh_khori": {
+                        "title": "گوه‌خوری",
+                        "stat_key": "goh_khori",
+                        "icon_id": "5819051035284479206",
+                        "funny_text": "گوه‌خوری نوین مشاهده شد!"
+                    },
+                    "kos_lisi": {
+                        "title": "کصلیسی",
+                        "stat_key": "kos_lisi",
+                        "icon_id": "5832692422647226240",
+                        "funny_text": "مدال شجاعت کصلیسی تعلق گرفت!"
+                    },
+                    "khaymali": {
+                        "title": "خایمالی",
+                        "stat_key": "khaymali",
+                        "icon_id": "5920300405341820405",
+                        "funny_text": "خایمال‌نامه جدید صادر شد!"
+                    },
+                    "kos_khali": {
+                        "title": "کصخلی",
+                        "stat_key": "kos_khali",
+                        "icon_id": "5443038326535759644",
+                        "funny_text": "پرونده پزشکی کصخلی تنظیم شد!"
+                    },
+                    "jendegi": {
+                        "title": "جندگی",
+                        "stat_key": "jendegi",
+                        "icon_id": "4974615079971455718",
+                        "funny_text": "ثبت جندگی جدید در سیستم با موفقیت ثبت شد!"
+                    }
+                }
+                cfg = action_configs[action_type]
+                rec_id = f"{chat_id}_{update.message.message_id}"
+                
+                increment_user_stat(db, target_user.id, cfg["stat_key"])
 
-    # --------------------------------------
-    # GENERAL PERCENTAGE SYSTEM
-    # --------------------------------------
-    if clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد "):
-        target_u = update.message.reply_to_message.from_user if update.message.reply_to_message else update.effective_user
-        topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").strip()
-        val = random.randint(0, 100)
-        
-        rand_emoji_id = random.choice([
-            "5886539179256450622", "5922483378304586599", 
-            "5195297917048462460", "5983342699816685361"
-        ])
-        
-        await update.message.reply_text(
-            f"{get_user_mention(target_u.id, target_u.full_name)}\n\n"
-            f'<tg-emoji emoji-id="{rand_emoji_id}">🎲</tg-emoji> <b>{val}٪ {html.escape(topic)}ه</b>',
-            parse_mode=ParseMode.HTML
-        )
-        return
+                if "action_records" not in db: db["action_records"] = {}
+                db["action_records"][rec_id] = {
+                    "target_id": target_user.id,
+                    "target_name": target_user.full_name,
+                    "creator_id": user_id,
+                    "creator_name": update.effective_user.full_name,
+                    "action_title": cfg["title"],
+                    "stat_key": cfg["stat_key"],
+                    "funny_text": cfg["funny_text"],
+                    "signers": []
+                }
+                mark_db_dirty()
+                save_db()
 
-    # --------------------------------------
-    # INDIVIDUAL COUNTRY WORLD TIME
-    # --------------------------------------
-    country_zones = {
-        "ایران": ("Asia/Tehran", "5271878966347601947", "🇮🇷"),
-        "آمریکا": ("America/New_York", "5927292517610426176", "🇺🇸"),
-        "امریکا": ("America/New_York", "5927292517610426176", "🇺🇸"),
-        "آلمان": ("Europe/Berlin", "5409360418520967565", "🇩🇪"),
-        "انگلیس": ("Europe/London", "5229192892710402006", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
-        "ترکیه": ("Europe/Istanbul", "5226948110873278599", "🇹🇷"),
-        "هندوستان": ("Asia/Kolkata", "6136551252781172945", "🇮🇳"),
-        "هند": ("Asia/Kolkata", "6136551252781172945", "🇮🇳"),
-        "عربستان": ("Asia/Riyadh", "5202079966761590204", "🇸🇦"),
-        "فرانسه": ("Europe/Paris", "5931269906434624310", "🇫🇷"),
-        "چین": ("Asia/Shanghai", "5431782733376399004", "🇨🇳"),
-        "ویتنام": ("Asia/Bangkok", "5474542319673812606", "🇻🇳"),
-        "قطر": ("Asia/Qatar", "5228799250367788944", "🇶🇦"),
-        "کره جنوبی": ("Asia/Seoul", "5456531898304047227", "🇰🇷"),
-        "کره": ("Asia/Seoul", "5456531898304047227", "🇰🇷"),
-        "ژاپن": ("Asia/Tokyo", "5456261908069885892", "🇯🇵"),
-        "فنلاند": ("Europe/Helsinki", "5382151560182642075", "🇫🇮"),
-    }
+                target_mention = get_user_mention(target_user.id, target_user.full_name)
+                creator_mention = get_user_mention(user_id, update.effective_user.full_name)
 
-    if norm_text.startswith("ساعت "):
-        c_name = norm_text.replace("ساعت ", "").strip()
-        if c_name in country_zones:
-            tz, emoji_id, fallback = country_zones[c_name]
-            c_time = datetime.now(ZoneInfo(tz)).strftime("%H:%M:%S")
-            await update.message.reply_text(f'<b><tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji> ساعت {c_name}: <code>{c_time}</code></b>', parse_mode=ParseMode.HTML)
+                init_msg = (
+                    f"<b>{cfg['title']} {target_mention} با موفقیت ثبت شد! <tg-emoji emoji-id=\"5206607081334906820\">✔️</tg-emoji></b>\n"
+                    f"<b>ثبت کننده {cfg['title']}: {creator_mention} <tg-emoji emoji-id=\"4956745198521549627\">🌟</tg-emoji></b>\n"
+                    f"<b><tg-emoji emoji-id=\"5803348359972393936\">⚙️</tg-emoji> در انتظار امضای شاهدان...</b>\n\n"
+                    f"<b>{cfg['funny_text']} <tg-emoji emoji-id=\"{cfg['icon_id']}\">🔥</tg-emoji></b>"
+                )
+
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✍️ امضای شاهدان (۰)", callback_data=f"sign_action:{rec_id}")],
+                    [InlineKeyboardButton(f"📊 آمار کل {cfg['title']} این کاربر", callback_data=f"stat_action:{rec_id}")]
+                ])
+
+                await update.message.reply_text(init_msg, reply_markup=kb, parse_mode=ParseMode.HTML)
+                return
+
+        # --------------------------------------
+        # STATS & OVERALL USER STATUS
+        # --------------------------------------
+        is_asking_own_stats = clean_raw in ["آمارم", "آمار من", "وضعیت من"]
+        is_asking_other_stats = clean_raw in ["اوضاع این", "اوضاعش", "آمار این", "وضعیت این", "وضعیت"] and update.message.reply_to_message
+
+        if is_asking_own_stats or is_asking_other_stats:
+            if is_asking_own_stats:
+                target_id = user_id
+                header_str = '<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار شما به شرح ذیل می‌باشد :</b>\n\n'
+            else:
+                target_user = update.message.reply_to_message.from_user
+                target_id = target_user.id
+                header_str = f'<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار {get_user_mention(target_id, target_user.full_name)} به شرح ذیل می‌باشد :</b>\n\n'
+
+            stats_msg = (
+                f"{header_str}"
+                f'<b><tg-emoji emoji-id="5433681959324754801">💩</tg-emoji> تعداد گوه‌خوری : {get_user_stat(db, target_id, "goh_khori")}</b>\n'
+                f'<b><tg-emoji emoji-id="5863828384332647680">👅</tg-emoji> تعداد کصلیسی : {get_user_stat(db, target_id, "kos_lisi")}</b>\n'
+                f'<b><tg-emoji emoji-id="5429327730070009271">🤲</tg-emoji> تعداد خایمالی : {get_user_stat(db, target_id, "khaymali")}</b>\n'
+                f'<b><tg-emoji emoji-id="5983342699816685361">👑</tg-emoji> تعداد جندگی : {get_user_stat(db, target_id, "jendegi")}</b>\n'
+                f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> تعداد کصخلی : {get_user_stat(db, target_id, "kos_khali")}</b>\n'
+                f'<b><tg-emoji emoji-id="5195297917048462460">🍌</tg-emoji> تعداد جقی بودن : {get_user_stat(db, target_id, "jaghi")}</b>\n'
+                f'<b><tg-emoji emoji-id="5922483378304586599">🐙</tg-emoji> تعداد کونی بودن : {get_user_stat(db, target_id, "koni")}</b>\n'
+                f'<b><tg-emoji emoji-id="5314297755579986373">😊</tg-emoji> تعداد سکسی شدن : {get_user_stat(db, target_id, "sexy")}</b>\n'
+                f'<b><tg-emoji emoji-id="5771442740147523468">❤️</tg-emoji> تعداد جذاب شدن : {get_user_stat(db, target_id, "jazab")}</b>\n'
+                f'<b><tg-emoji emoji-id="5283151000641757020">😎</tg-emoji> تعداد خوژتیپ شدن : {get_user_stat(db, target_id, "handsome")}</b>\n'
+                f'<b><tg-emoji emoji-id="5406926593698312391">❤️</tg-emoji> تعداد کاپل شدن : {get_user_stat(db, target_id, "ship")}</b>\n'
+                f'<b><tg-emoji emoji-id="5854843712181378616">🏆</tg-emoji> تعداد پر حرف بودن : {get_user_stat(db, target_id, "goh_khor_hour")}</b>'
+            )
+            await update.message.reply_text(stats_msg, parse_mode=ParseMode.HTML)
             return
 
-    # ۱. ساعت جهانی کامل
-    if norm_text in ["ساعت جهانی", "ساعت"] and features.get("world_time", True):
-        now_tehran = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%H:%M:%S")
-        now_ny = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
-        now_germany = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%H:%M:%S")
-        now_london = datetime.now(ZoneInfo("Europe/London")).strftime("%H:%M:%S")
-        now_istanbul = datetime.now(ZoneInfo("Europe/Istanbul")).strftime("%H:%M:%S")
-        now_mumbai = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
-        now_riyadh = datetime.now(ZoneInfo("Asia/Riyadh")).strftime("%H:%M:%S")
-        now_paris = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
-        now_beijing = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%H:%M:%S")
-        now_hanoi = datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%H:%M:%S")
-        now_doha = datetime.now(ZoneInfo("Asia/Qatar")).strftime("%H:%M:%S")
-        now_seoul = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M:%S")
-        now_tokyo = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M:%S")
-        now_helsinki = datetime.now(ZoneInfo("Europe/Helsinki")).strftime("%H:%M:%S")
+        # --------------------------------------
+        # GENERAL PERCENTAGE SYSTEM
+        # --------------------------------------
+        if clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد "):
+            target_u = update.message.reply_to_message.from_user if update.message.reply_to_message else update.effective_user
+            topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").strip()
+            val = random.randint(0, 100)
+            
+            rand_emoji_id = random.choice([
+                "5886539179256450622", "5922483378304586599", 
+                "5195297917048462460", "5983342699816685361"
+            ])
+            
+            await update.message.reply_text(
+                f"{get_user_mention(target_u.id, target_u.full_name)}\n\n"
+                f'<tg-emoji emoji-id="{rand_emoji_id}">🎲</tg-emoji> <b>{val}٪ {html.escape(topic)}ه</b>',
+                parse_mode=ParseMode.HTML
+            )
+            return
 
-        msg = (
-            '<b><tg-emoji emoji-id="5399898266265475100">🌍</tg-emoji> ساعت جهانی برخی از کشورها :</b>\n\n'
-            f'<b><tg-emoji emoji-id="5271878966347601947">🇮🇷</tg-emoji> ایران: {now_tehran}</b>\n'
-            f'<b><tg-emoji emoji-id="5927292517610426176">🇺🇸</tg-emoji> آمریکا: {now_ny}</b>\n'
-            f'<b><tg-emoji emoji-id="5409360418520967565">🇩🇪</tg-emoji> آلمان: {now_germany}</b>\n'
-            f'<b><tg-emoji emoji-id="5229192892710402006">🏴󠁧󠁢󠁥󠁮󠁧󠁿</tg-emoji> انگلیس: {now_london}</b>\n'
-            f'<b><tg-emoji emoji-id="5226948110873278599">🇹🇷</tg-emoji> ترکیه: {now_istanbul}</b>\n'
-            f'<b><tg-emoji emoji-id="6136551252781172945">🇮🇳</tg-emoji> هندوستان: {now_mumbai}</b>\n'
-            f'<b><tg-emoji emoji-id="5202079966761590204">🇸🇦</tg-emoji> عربستان: {now_riyadh}</b>\n'
-            f'<b><tg-emoji emoji-id="5931269906434624310">🇫🇷</tg-emoji> فرانسه: {now_paris}</b>\n'
-            f'<b><tg-emoji emoji-id="5431782733376399004">🇨🇳</tg-emoji> چین: {now_beijing}</b>\n'
-            f'<b><tg-emoji emoji-id="5474542319673812606">🇻🇳</tg-emoji> ویتنام: {now_hanoi}</b>\n'
-            f'<b><tg-emoji emoji-id="5228799250367788944">🇶🇦</tg-emoji> قطر: {now_doha}</b>\n'
-            f'<b><tg-emoji emoji-id="5456531898304047227">🇰🇷</tg-emoji> کره جنوبی: {now_seoul}</b>\n'
-            f'<b><tg-emoji emoji-id="5456261908069885892">🇯🇵</tg-emoji> ژاپن: {now_tokyo}</b>\n'
-            f'<b><tg-emoji emoji-id="5382151560182642075">🇫🇮</tg-emoji> فنلاند: {now_helsinki}</b>'
-        )
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        # --------------------------------------
+        # INDIVIDUAL COUNTRY WORLD TIME
+        # --------------------------------------
+        country_zones = {
+            "ایران": ("Asia/Tehran", "5271878966347601947", "🇮🇷"),
+            "آمریکا": ("America/New_York", "5927292517610426176", "🇺🇸"),
+            "امریکا": ("America/New_York", "5927292517610426176", "🇺🇸"),
+            "آلمان": ("Europe/Berlin", "5409360418520967565", "🇩🇪"),
+            "انگلیس": ("Europe/London", "5229192892710402006", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
+            "ترکیه": ("Europe/Istanbul", "5226948110873278599", "🇹🇷"),
+            "هندوستان": ("Asia/Kolkata", "6136551252781172945", "🇮🇳"),
+            "هند": ("Asia/Kolkata", "6136551252781172945", "🇮🇳"),
+            "عربستان": ("Asia/Riyadh", "5202079966761590204", "🇸🇦"),
+            "فرانسه": ("Europe/Paris", "5931269906434624310", "🇫🇷"),
+            "چین": ("Asia/Shanghai", "5431782733376399004", "🇨🇳"),
+            "ویتنام": ("Asia/Bangkok", "5474542319673812606", "🇻🇳"),
+            "قطر": ("Asia/Qatar", "5228799250367788944", "🇶🇦"),
+            "کره جنوبی": ("Asia/Seoul", "5456531898304047227", "🇰🇷"),
+            "کره": ("Asia/Seoul", "5456531898304047227", "🇰🇷"),
+            "ژاپن": ("Asia/Tokyo", "5456261908069885892", "🇯🇵"),
+            "فنلاند": ("Europe/Helsinki", "5382151560182642075", "🇫🇮"),
+        }
 
-    # ۲. خوشتیپ / خوژتیپ
-    elif norm_text in ["خوشتیپ کیه", "خوشتیپ کی", "خوژتیپ کیه", "خوژتیپ کی", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
-        word_label = "خوژتیپ" if "خوژ" in norm_text else "خوشتیپ"
-        is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "handsome")
-        
-        if is_cd:
-            m_rem = rem_sec // 60
-            target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
+        if norm_text.startswith("ساعت "):
+            c_name = norm_text.replace("ساعت ", "").strip()
+            if c_name in country_zones:
+                tz, emoji_id, fallback = country_zones[c_name]
+                c_time = datetime.now(ZoneInfo(tz)).strftime("%H:%M:%S")
+                await update.message.reply_text(f'<b><tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji> ساعت {c_name}: <code>{c_time}</code></b>', parse_mode=ParseMode.HTML)
+                return
+
+        # ۱. ساعت جهانی کامل
+        if norm_text in ["ساعت جهانی", "ساعت"] and features.get("world_time", True):
+            now_tehran = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%H:%M:%S")
+            now_ny = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
+            now_germany = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%H:%M:%S")
+            now_london = datetime.now(ZoneInfo("Europe/London")).strftime("%H:%M:%S")
+            now_istanbul = datetime.now(ZoneInfo("Europe/Istanbul")).strftime("%H:%M:%S")
+            now_mumbai = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
+            now_riyadh = datetime.now(ZoneInfo("Asia/Riyadh")).strftime("%H:%M:%S")
+            now_paris = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
+            now_beijing = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%H:%M:%S")
+            now_hanoi = datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%H:%M:%S")
+            now_doha = datetime.now(ZoneInfo("Asia/Qatar")).strftime("%H:%M:%S")
+            now_seoul = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M:%S")
+            now_tokyo = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M:%S")
+            now_helsinki = datetime.now(ZoneInfo("Europe/Helsinki")).strftime("%H:%M:%S")
+
             msg = (
-                f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه :</b>\n\n'
-                f'<b><tg-emoji emoji-id="5321484996802797866">😎</tg-emoji> | {target_mention}</b>\n\n'
-                f'<b>- ولی خب {m_rem} دقیقه دیگه {word_label} بعدی معرفی میشه! <tg-emoji emoji-id="5323417298294298902">🙂</tg-emoji></b>'
+                '<b><tg-emoji emoji-id="5399898266265475100">🌍</tg-emoji> ساعت جهانی برخی از کشورها :</b>\n\n'
+                f'<b><tg-emoji emoji-id="5271878966347601947">🇮🇷</tg-emoji> ایران: {now_tehran}</b>\n'
+                f'<b><tg-emoji emoji-id="5927292517610426176">🇺🇸</tg-emoji> آمریکا: {now_ny}</b>\n'
+                f'<b><tg-emoji emoji-id="5409360418520967565">🇩🇪</tg-emoji> آلمان: {now_germany}</b>\n'
+                f'<b><tg-emoji emoji-id="5229192892710402006">🏴󠁧󠁢󠁥󠁮󠁧󠁿</tg-emoji> انگلیس: {now_london}</b>\n'
+                f'<b><tg-emoji emoji-id="5226948110873278599">🇹🇷</tg-emoji> ترکیه: {now_istanbul}</b>\n'
+                f'<b><tg-emoji emoji-id="6136551252781172945">🇮🇳</tg-emoji> هندوستان: {now_mumbai}</b>\n'
+                f'<b><tg-emoji emoji-id="5202079966761590204">🇸🇦</tg-emoji> عربستان: {now_riyadh}</b>\n'
+                f'<b><tg-emoji emoji-id="5931269906434624310">🇫🇷</tg-emoji> فرانسه: {now_paris}</b>\n'
+                f'<b><tg-emoji emoji-id="5431782733376399004">🇨🇳</tg-emoji> چین: {now_beijing}</b>\n'
+                f'<b><tg-emoji emoji-id="5474542319673812606">🇻🇳</tg-emoji> ویتنام: {now_hanoi}</b>\n'
+                f'<b><tg-emoji emoji-id="5228799250367788944">🇶🇦</tg-emoji> قطر: {now_doha}</b>\n'
+                f'<b><tg-emoji emoji-id="5456531898304047227">🇰🇷</tg-emoji> کره جنوبی: {now_seoul}</b>\n'
+                f'<b><tg-emoji emoji-id="5456261908069885892">🇯🇵</tg-emoji> ژاپن: {now_tokyo}</b>\n'
+                f'<b><tg-emoji emoji-id="5382151560182642075">🇫🇮</tg-emoji> فنلاند: {now_helsinki}</b>'
             )
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            m_tuple = await get_fast_random_member(context, chat_id, db)
-            if m_tuple:
-                tid, info = m_tuple
-                target_mention = get_user_mention(int(tid), info["fullname"])
-                set_cooldown_data(db, chat_id, "handsome", {"id": int(tid), "fullname": info["fullname"]})
-                increment_user_stat(db, int(tid), "handsome")
-                
+
+        # ۲. خوشتیپ / خوژتیپ
+        elif norm_text in ["خوشتیپ کیه", "خوشتیپ کی", "خوژتیپ کیه", "خوژتیپ کی", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
+            word_label = "خوژتیپ" if "خوژ" in norm_text else "خوشتیپ"
+            is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "handsome")
+            
+            if is_cd:
+                m_rem = rem_sec // 60
+                target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
                 msg = (
                     f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5321484996802797866">😎</tg-emoji> | {target_mention}</b>'
+                    f'<b><tg-emoji emoji-id="5321484996802797866">😎</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>- ولی خب {m_rem} دقیقه دیگه {word_label} بعدی معرفی میشه! <tg-emoji emoji-id="5323417298294298902">🙂</tg-emoji></b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            else:
+                m_tuple = await get_fast_random_member(context, chat_id, db)
+                if m_tuple:
+                    tid, info = m_tuple
+                    target_mention = get_user_mention(int(tid), info["fullname"])
+                    set_cooldown_data(db, chat_id, "handsome", {"id": int(tid), "fullname": info["fullname"]})
+                    increment_user_stat(db, int(tid), "handsome")
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5321484996802797866">😎</tg-emoji> | {target_mention}</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۳. جنده
-    elif norm_text in ["جنده کیه", "جنده کی", "جنده"] and features.get("jende", True):
-        is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jende")
-        if is_cd:
-            m_rem = rem_sec // 60
-            target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-            msg = (
-                f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه :</b>\n\n'
-                f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>\n\n'
-                f'<b>+ ولی خب هر جندگی دائمی نیست! {m_rem} دقیقه دیگه جنده بعدی معرفی میشه! <tg-emoji emoji-id="4974573543342736117">🖤</tg-emoji></b>'
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            m_tuple = await get_fast_random_member(context, chat_id, db)
-            if m_tuple:
-                tid, info = m_tuple
-                target_mention = get_user_mention(int(tid), info["fullname"])
-                set_cooldown_data(db, chat_id, "jende", {"id": int(tid), "fullname": info["fullname"]})
-                increment_user_stat(db, int(tid), "jendegi")
-                
+        # ۳. جنده
+        elif norm_text in ["جنده کیه", "جنده کی", "جنده"] and features.get("jende", True):
+            is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jende")
+            if is_cd:
+                m_rem = rem_sec // 60
+                target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
                 msg = (
                     f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>'
+                    f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>+ ولی خب هر جندگی دائمی نیست! {m_rem} دقیقه دیگه جنده بعدی معرفی میشه! <tg-emoji emoji-id="4974573543342736117">🖤</tg-emoji></b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            else:
+                m_tuple = await get_fast_random_member(context, chat_id, db)
+                if m_tuple:
+                    tid, info = m_tuple
+                    target_mention = get_user_mention(int(tid), info["fullname"])
+                    set_cooldown_data(db, chat_id, "jende", {"id": int(tid), "fullname": info["fullname"]})
+                    increment_user_stat(db, int(tid), "jendegi")
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۴. کونی
-    elif norm_text in ["کونی کیه", "کونی کی", "کونی"] and features.get("koni", True):
-        is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koni")
-        if is_cd:
-            m_rem = rem_sec // 60
-            target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-            msg = (
-                f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه :</b>\n\n'
-                f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>\n\n'
-                f'<b>+ ولی خب {m_rem} دقیقه دیگه کونی بعدی معرفی میشه! <tg-emoji emoji-id="4974672507979170737">🍌</tg-emoji></b>'
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            m_tuple = await get_fast_random_member(context, chat_id, db)
-            if m_tuple:
-                tid, info = m_tuple
-                target_mention = get_user_mention(int(tid), info["fullname"])
-                set_cooldown_data(db, chat_id, "koni", {"id": int(tid), "fullname": info["fullname"]})
-                increment_user_stat(db, int(tid), "koni")
-                
+        # ۴. کونی
+        elif norm_text in ["کونی کیه", "کونی کی", "کونی"] and features.get("koni", True):
+            is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koni")
+            if is_cd:
+                m_rem = rem_sec // 60
+                target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
                 msg = (
                     f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>'
+                    f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>+ ولی خب {m_rem} دقیقه دیگه کونی بعدی معرفی میشه! <tg-emoji emoji-id="4974672507979170737">🍌</tg-emoji></b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            else:
+                m_tuple = await get_fast_random_member(context, chat_id, db)
+                if m_tuple:
+                    tid, info = m_tuple
+                    target_mention = get_user_mention(int(tid), info["fullname"])
+                    set_cooldown_data(db, chat_id, "koni", {"id": int(tid), "fullname": info["fullname"]})
+                    increment_user_stat(db, int(tid), "koni")
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۵. جقی
-    elif norm_text in ["جقی", "جقی کیه", "جقی گروه"] and features.get("jaghi", True):
-        is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jaghi")
-        if is_cd:
-            m_rem = rem_sec // 60
-            target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-            msg = (
-                f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه :</b>\n\n'
-                f'<b><tg-emoji emoji-id="4974362376980660892">🍌</tg-emoji> | {target_mention}</b>\n\n'
-                f'<b>+ بزن که خوب میزنی رفیق گلم! <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji></b>\n'
-                f'<b>- ولی این جق ابدی نیست! {m_rem} دقیقه دیگه جقی بعدیو معرفی میکنم.</b>'
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            m_tuple = await get_fast_random_member(context, chat_id, db)
-            if m_tuple:
-                tid, info = m_tuple
-                target_mention = get_user_mention(int(tid), info["fullname"])
-                set_cooldown_data(db, chat_id, "jaghi", {"id": int(tid), "fullname": info["fullname"]})
-                increment_user_stat(db, int(tid), "jaghi")
-                
+        # ۵. جقی
+        elif norm_text in ["جقی", "جقی کیه", "جقی گروه"] and features.get("jaghi", True):
+            is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jaghi")
+            if is_cd:
+                m_rem = rem_sec // 60
+                target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
                 msg = (
                     f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه :</b>\n\n'
                     f'<b><tg-emoji emoji-id="4974362376980660892">🍌</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>+ بزن که خوب میزنی رفیق گلم! <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji></b>'
+                    f'<b>+ بزن که خوب میزنی رفیق گلم! <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji></b>\n'
+                    f'<b>- ولی این جق ابدی نیست! {m_rem} دقیقه دیگه جقی بعدیو معرفی میکنم.</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            else:
+                m_tuple = await get_fast_random_member(context, chat_id, db)
+                if m_tuple:
+                    tid, info = m_tuple
+                    target_mention = get_user_mention(int(tid), info["fullname"])
+                    set_cooldown_data(db, chat_id, "jaghi", {"id": int(tid), "fullname": info["fullname"]})
+                    increment_user_stat(db, int(tid), "jaghi")
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="4974362376980660892">🍌</tg-emoji> | {target_mention}</b>\n\n'
+                        f'<b>+ بزن که خوب میزنی رفیق گلم! <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji></b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۶. کصخل / کسخل
-    elif norm_text in ["کصخل", "کسخل", "کصخل گروه", "کسخل گروه"] and features.get("koskhal", True):
-        is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koskhal")
-        if is_cd:
-            m_rem = rem_sec // 60
-            target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-            msg = (
-                f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه :</b>\n\n'
-                f'<b><tg-emoji emoji-id="5861747442612964510">🤙</tg-emoji> | {target_mention}</b>\n\n'
-                f'<b>+ هر کصخلی درمانی دارد! {m_rem} دقیقه دیگه کصخل بعدیو معرفی میکنم.</b>'
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            m_tuple = await get_fast_random_member(context, chat_id, db)
-            if m_tuple:
-                tid, info = m_tuple
-                target_mention = get_user_mention(int(tid), info["fullname"])
-                set_cooldown_data(db, chat_id, "koskhal", {"id": int(tid), "fullname": info["fullname"]})
-                increment_user_stat(db, int(tid), "kos_khali")
-                
+        # ۶. کصخل / کسخل
+        elif norm_text in ["کصخل", "کسخل", "کصخل گروه", "کسخل گروه"] and features.get("koskhal", True):
+            is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koskhal")
+            if is_cd:
+                m_rem = rem_sec // 60
+                target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
                 msg = (
                     f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه :</b>\n\n'
                     f'<b><tg-emoji emoji-id="5861747442612964510">🤙</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>+ هر کصخلی درمانی دارد!</b>'
+                    f'<b>+ هر کصخلی درمانی دارد! {m_rem} دقیقه دیگه کصخل بعدیو معرفی میکنم.</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            else:
+                m_tuple = await get_fast_random_member(context, chat_id, db)
+                if m_tuple:
+                    tid, info = m_tuple
+                    target_mention = get_user_mention(int(tid), info["fullname"])
+                    set_cooldown_data(db, chat_id, "koskhal", {"id": int(tid), "fullname": info["fullname"]})
+                    increment_user_stat(db, int(tid), "kos_khali")
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5861747442612964510">🤙</tg-emoji> | {target_mention}</b>\n\n'
+                        f'<b>+ هر کصخلی درمانی دارد!</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۷. سکسی
-    elif norm_text in ["سکسی", "سکسی گروه"] and features.get("sexy", True):
-        is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "sexy")
-        if is_cd:
-            m_rem = rem_sec // 60
-            target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-            msg = (
-                f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه :</b>\n\n'
-                f'<b><tg-emoji emoji-id="5247009821508537591">🚬</tg-emoji> | {target_mention}</b>\n\n'
-                f'<b>+ ولی خب {m_rem} دقیقه دیگه سکسی بعدیو معرفی میکنم.</b>'
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            m_tuple = await get_fast_random_member(context, chat_id, db)
-            if m_tuple:
-                tid, info = m_tuple
-                target_mention = get_user_mention(int(tid), info["fullname"])
-                set_cooldown_data(db, chat_id, "sexy", {"id": int(tid), "fullname": info["fullname"]})
-                increment_user_stat(db, int(tid), "sexy")
-                
+        # ۷. سکسی
+        elif norm_text in ["سکسی", "سکسی گروه"] and features.get("sexy", True):
+            is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "sexy")
+            if is_cd:
+                m_rem = rem_sec // 60
+                target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
                 msg = (
                     f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5247009821508537591">🚬</tg-emoji> | {target_mention}</b>'
+                    f'<b><tg-emoji emoji-id="5247009821508537591">🚬</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>+ ولی خب {m_rem} دقیقه دیگه سکسی بعدیو معرفی میکنم.</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            else:
+                m_tuple = await get_fast_random_member(context, chat_id, db)
+                if m_tuple:
+                    tid, info = m_tuple
+                    target_mention = get_user_mention(int(tid), info["fullname"])
+                    set_cooldown_data(db, chat_id, "sexy", {"id": int(tid), "fullname": info["fullname"]})
+                    increment_user_stat(db, int(tid), "sexy")
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5247009821508537591">🚬</tg-emoji> | {target_mention}</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۸. جذاب
-    elif norm_text in ["جذاب", "جذاب گروه"] and features.get("jazab", True):
-        is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jazab")
-        if is_cd:
-            m_rem = rem_sec // 60
-            target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-            msg = (
-                f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه :</b>\n\n'
-                f'<b><tg-emoji emoji-id="5774059410317905809">❤️</tg-emoji> | {target_mention}</b>\n\n'
-                f'<b>عشقمممم شماره میدی پاره کنیم؟؟؟ <tg-emoji emoji-id="5773636884320226590">💋</tg-emoji></b>\n'
-                f'<b>+ {m_rem} دقیقه دیگه جذاب بعدیو معرفی میکنم.</b>'
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            m_tuple = await get_fast_random_member(context, chat_id, db)
-            if m_tuple:
-                tid, info = m_tuple
-                target_mention = get_user_mention(int(tid), info["fullname"])
-                set_cooldown_data(db, chat_id, "jazab", {"id": int(tid), "fullname": info["fullname"]})
-                increment_user_stat(db, int(tid), "jazab")
-                
+        # ۸. جذاب
+        elif norm_text in ["جذاب", "جذاب گروه"] and features.get("jazab", True):
+            is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jazab")
+            if is_cd:
+                m_rem = rem_sec // 60
+                target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
                 msg = (
                     f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه :</b>\n\n'
                     f'<b><tg-emoji emoji-id="5774059410317905809">❤️</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>عشقمممم شماره میدی پاره کنیم؟؟؟ <tg-emoji emoji-id="5773636884320226590">💋</tg-emoji></b>'
+                    f'<b>عشقمممم شماره میدی پاره کنیم؟؟؟ <tg-emoji emoji-id="5773636884320226590">💋</tg-emoji></b>\n'
+                    f'<b>+ {m_rem} دقیقه دیگه جذاب بعدیو معرفی میکنم.</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            else:
+                m_tuple = await get_fast_random_member(context, chat_id, db)
+                if m_tuple:
+                    tid, info = m_tuple
+                    target_mention = get_user_mention(int(tid), info["fullname"])
+                    set_cooldown_data(db, chat_id, "jazab", {"id": int(tid), "fullname": info["fullname"]})
+                    increment_user_stat(db, int(tid), "jazab")
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5774059410317905809">❤️</tg-emoji> | {target_mention}</b>\n\n'
+                        f'<b>عشقمممم شماره میدی پاره کنیم؟؟؟ <tg-emoji emoji-id="5773636884320226590">💋</tg-emoji></b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+        # ۹. شیپ / کاپل
+        elif norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
+            is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
+            if is_cd:
+                m_rem = rem_sec // 60
+                name1 = get_user_mention(cd_data["u1"]["id"], cd_data["u1"]["name"])
+                name2 = get_user_mention(cd_data["u2"]["id"], cd_data["u2"]["name"])
+                
+                last_msg_id = cd_data.get("last_msg_id")
+                couple_data = db.get("couples", {}).get(str(last_msg_id), {}) if last_msg_id else {}
+                agrees = couple_data.get("agrees", [])
+                disagrees = couple_data.get("disagrees", [])
+
+                agrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in agrees]) if agrees else "هیچکس"
+                disagrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in disagrees]) if disagrees else "هیچکس"
+
+                msg = (
+                    f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان ثبت شده: {agrees_text}</b>\n'
+                    f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان ثبت شده : {disagrees_text}</b>\n\n'
+                    f'<b>+ {m_rem} دقیقه دیگه کاپل بعدیو میگم بچهااااا!<tg-emoji emoji-id="5816460319601467354">😺</tg-emoji></b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            else:
+                m1 = await get_fast_random_member(context, chat_id, db)
+                m2 = await get_fast_random_member(context, chat_id, db)
+                if m1 and m2 and m1[0] != m2[0]:
+                    u1_dict = {"id": int(m1[0]), "name": m1[1]['fullname']}
+                    u2_dict = {"id": int(m2[0]), "name": m2[1]['fullname']}
+                    
+                    increment_user_stat(db, u1_dict["id"], "ship")
+                    increment_user_stat(db, u2_dict["id"], "ship")
+
+                    name1 = get_user_mention(u1_dict["id"], u1_dict["name"])
+                    name2 = get_user_mention(u2_dict["id"], u2_dict["name"])
+
+                    kb = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("🟢 موافقم", callback_data="couple_agree"),
+                            InlineKeyboardButton("🔴 افتضاح", callback_data="couple_disagree")
+                        ]
+                    ])
+
+                    sent_msg = await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان: هیچکس</b>\n'
+                        f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان: هیچکس</b>',
+                        reply_markup=kb,
+                        parse_mode=ParseMode.HTML
+                    )
+
+                    if "couples" not in db: db["couples"] = {}
+                    db["couples"][str(sent_msg.message_id)] = {
+                        "u1": u1_dict,
+                        "u2": u2_dict,
+                        "agrees": [],
+                        "disagrees": [],
+                        "created_at": datetime.now().timestamp()
+                    }
+                    set_cooldown_data(db, chat_id, "ship", {"u1": u1_dict, "u2": u2_dict, "last_msg_id": sent_msg.message_id})
+                else:
+                    await update.message.reply_text("❌ اعضای کافی موجود نیست!")
+
+        # ۱۰. پیشنهاد غذا
+        elif ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
+            fl = db.get("foods", [])
+            if fl:
+                selected_food = random.choice(fl)
+                msg = (
+                    f'<b><tg-emoji emoji-id="5418248505447698083">🧽</tg-emoji> دنبال غذایی؟ بنظرم بهترین ایده غذا برای تو اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5357066069250948384">🐱</tg-emoji> | {html.escape(selected_food)}</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-    # ۹. شیپ / کاپل
-    elif norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
-        is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
-        if is_cd:
-            m_rem = rem_sec // 60
-            name1 = get_user_mention(cd_data["u1"]["id"], cd_data["u1"]["name"])
-            name2 = get_user_mention(cd_data["u2"]["id"], cd_data["u2"]["name"])
-            
-            last_msg_id = cd_data.get("last_msg_id")
-            couple_data = db.get("couples", {}).get(str(last_msg_id), {}) if last_msg_id else {}
-            agrees = couple_data.get("agrees", [])
-            disagrees = couple_data.get("disagrees", [])
-
-            agrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in agrees]) if agrees else "هیچکس"
-            disagrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in disagrees]) if disagrees else "هیچکس"
-
-            msg = (
-                f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
-                f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
-                f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان ثبت شده: {agrees_text}</b>\n'
-                f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان ثبت شده : {disagrees_text}</b>\n\n'
-                f'<b>+ {m_rem} دقیقه دیگه کاپل بعدیو میگم بچهااااا!<tg-emoji emoji-id="5816460319601467354">😺</tg-emoji></b>'
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            m1 = await get_fast_random_member(context, chat_id, db)
-            m2 = await get_fast_random_member(context, chat_id, db)
-            if m1 and m2 and m1[0] != m2[0]:
-                u1_dict = {"id": int(m1[0]), "name": m1[1]['fullname']}
-                u2_dict = {"id": int(m2[0]), "name": m2[1]['fullname']}
-                
-                increment_user_stat(db, u1_dict["id"], "ship")
-                increment_user_stat(db, u2_dict["id"], "ship")
-
-                name1 = get_user_mention(u1_dict["id"], u1_dict["name"])
-                name2 = get_user_mention(u2_dict["id"], u2_dict["name"])
-
-                kb = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("🟢 موافقم", callback_data="couple_agree"),
-                        InlineKeyboardButton("🔴 افتضاح", callback_data="couple_disagree")
-                    ]
-                ])
-
-                sent_msg = await update.message.reply_text(
-                    f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان: هیچکس</b>\n'
-                    f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان: هیچکس</b>',
-                    reply_markup=kb,
-                    parse_mode=ParseMode.HTML
-                )
-
-                if "couples" not in db: db["couples"] = {}
-                db["couples"][str(sent_msg.message_id)] = {
-                    "u1": u1_dict,
-                    "u2": u2_dict,
-                    "agrees": [],
-                    "disagrees": [],
-                    "created_at": datetime.now().timestamp()
-                }
-                set_cooldown_data(db, chat_id, "ship", {"u1": u1_dict, "u2": u2_dict, "last_msg_id": sent_msg.message_id})
+        # ۱۱. سیستم شعرخوانی
+        elif norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
+            custom_names = db.get("custom_names", [])
+            if custom_names:
+                target_name = random.choice(custom_names)
             else:
-                await update.message.reply_text("❌ اعضای کافی موجود نیست!")
+                m_tuple = await get_fast_random_member(context, chat_id, db)
+                if m_tuple:
+                    tid, info = m_tuple
+                    target_name = get_user_mention(int(tid), info["fullname"])
+                else:
+                    target_name = "رفیق"
 
-    # ۱۰. پیشنهاد غذا
-    elif ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
-        fl = db.get("foods", [])
-        if fl:
-            selected_food = random.choice(fl)
-            msg = (
-                f'<b><tg-emoji emoji-id="5418248505447698083">🧽</tg-emoji> دنبال غذایی؟ بنظرم بهترین ایده غذا برای تو اینه :</b>\n\n'
-                f'<b><tg-emoji emoji-id="5357066069250948384">🐱</tg-emoji> | {html.escape(selected_food)}</b>'
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            all_poems = db.get("poems", DEFAULT_POEMS)
+            poem_template = random.choice(all_poems)
+            final_poem = poem_template.format(name=target_name)
+            await update.message.reply_text(f"📜 <b>{final_poem}</b>", parse_mode=ParseMode.HTML)
 
-    # ۱۱. سیستم شعرخوانی
-    elif norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
-        custom_names = db.get("custom_names", [])
-        if custom_names:
-            target_name = random.choice(custom_names)
-        else:
-            m_tuple = await get_fast_random_member(context, chat_id, db)
-            if m_tuple:
-                tid, info = m_tuple
-                target_name = get_user_mention(int(tid), info["fullname"])
-            else:
-                target_name = "رفیق"
+        # ۱۲. تشخیص «لف»
+        elif LEF_PATTERN.search(raw_text) and features.get("lef", True):
+            ml = db.get("media_lef")
+            if ml:
+                mt, fi = ml["type"], ml["file_id"]
+                if mt == "sticker": await update.message.reply_sticker(fi)
+                elif mt == "photo": await update.message.reply_photo(fi)
+                elif mt == "animation": await update.message.reply_animation(fi)
+                elif mt == "video": await update.message.reply_video(fi)
 
-        all_poems = db.get("poems", DEFAULT_POEMS)
-        poem_template = random.choice(all_poems)
-        final_poem = poem_template.format(name=target_name)
-        await update.message.reply_text(f"📜 <b>{final_poem}</b>", parse_mode=ParseMode.HTML)
-
-    # ۱۲. تشخیص «لف»
-    elif LEF_PATTERN.search(raw_text) and features.get("lef", True):
-        ml = db.get("media_lef")
-        if ml:
-            mt, fi = ml["type"], ml["file_id"]
-            if mt == "sticker": await update.message.reply_sticker(fi)
-            elif mt == "photo": await update.message.reply_photo(fi)
-            elif mt == "animation": await update.message.reply_animation(fi)
-            elif mt == "video": await update.message.reply_video(fi)
+    except Exception:
+        logger.exception("Error in handle_messages:")
 
 # ==========================================
 # GLOBAL ERROR HANDLER & MAIN
@@ -1789,10 +1827,8 @@ def main():
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
-    # 🎯 هاندر مستقیم و اختصاصی برای بازی دوز
-    app.add_handler(MessageHandler(filters.Regex(r"^(دوز|گودی دوز|گودی دوز بزار)$"), start_dwoz_game))
-
-    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_messages))
+    # پردازش کلیه پیام‌های متنی
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_messages))
     app.add_error_handler(global_error_handler)
 
     logger.info("Bot is running...")
