@@ -252,17 +252,14 @@ async def register_member(update: Update, db: dict):
             db["active_chats"].append(chat.id)
             mark_db_dirty()
             
-        # شمارش مجزای پیام‌های هر گروه
         if "hourly_messages" not in db: db["hourly_messages"] = {}
         if chat_str not in db["hourly_messages"]: db["hourly_messages"][chat_str] = {}
         db["hourly_messages"][chat_str][user_id] = db["hourly_messages"][chat_str].get(user_id, 0) + 1
 
-        # ۱۰ کاربر اخیر فعال برای افزایش سرعت
         if "recent_active_users" not in db: db["recent_active_users"] = {}
         if chat_str not in db["recent_active_users"]: db["recent_active_users"][chat_str] = []
         recent_list = db["recent_active_users"][chat_str]
         
-        # حذف و اضافه به انتهای لیست برای حفظ تازگی
         recent_list = [u for u in recent_list if u[0] != user_id]
         recent_list.append((user_id, {"fullname": fullname, "username": username}))
         if len(recent_list) > 10:
@@ -283,7 +280,6 @@ async def get_fast_random_member(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     if valid_recent:
         return random.choice(valid_recent)
     
-    # fallback به اعضای کلی دیتابیس
     members = db.get("members", {})
     valid_members = []
     for uid_str, info in members.items():
@@ -474,7 +470,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"<b>{html.escape(rec['action_title'])} {target_mention} با موفقیت ثبت شد! <tg-emoji emoji-id=\"5206607081334906820\">✔️</tg-emoji></b>\n"
             f"<b>ثبت کننده {html.escape(rec['action_title'])}: {creator_mention} <tg-emoji emoji-id=\"4956745198521549627\">🌟</tg-emoji></b>\n"
             f"<b><tg-emoji emoji-id=\"5803348359972393936\">⚙️</tg-emoji> در انتظار امضای شاهدان...</b>\n\n"
-            f"{rec['funny_text']}\n"
+            f"<b>{rec['funny_text']}</b>\n"
             f"<b>شاهدان {html.escape(rec['action_title'])}: <tg-emoji emoji-id=\"5458382591121964689\">✍️</tg-emoji></b>\n"
             f"{signers_list}"
         )
@@ -503,7 +499,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("اطلاعات یافت نشد!", show_alert=True)
         return
 
-    # ۳. سیستم رای‌گیری کاپل (مهلت ۳۰ ثانیه‌ای)
+    # ۳. سیستم رای‌گیری کاپل (مهلت ۳۰ ثانیه‌ای + اصلاح ثبت اسامی)
     elif data in ["couple_agree", "couple_disagree"]:
         msg_id = str(query.message.message_id)
         couples = db.get("couples", {})
@@ -517,6 +513,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         
         if datetime.now().timestamp() - created_at > 30:
             await query.answer("⏳ مهلت ۳۰ ثانیه‌ای رای‌گیری به پایان رسیده است!", show_alert=True)
+            try:
+                await query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
             return
 
         agrees = couple_data["agrees"]
@@ -790,9 +790,17 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mark_db_dirty()
             save_db(force=True)
             try:
-                sent = await context.bot.send_message(chat_id=target_cid, text=raw_text, parse_mode=ParseMode.HTML)
-                await context.bot.pin_chat_message(chat_id=target_cid, message_id=sent.message_id)
-                await update.message.reply_text("✅ پیام همگانی با موفقیت ارسال و پین شد.")
+                # حفظ کامل انتیتی‌ها و ایموجی‌های پریمیوم پیام اصلی
+                sent = await context.bot.send_message(
+                    chat_id=target_cid,
+                    text=update.message.text or "",
+                    entities=update.message.entities
+                )
+                try:
+                    await context.bot.pin_chat_message(chat_id=target_cid, message_id=sent.message_id)
+                except Exception:
+                    logger.warning("Bot does not have pin rights in target chat, skipping pin.")
+                await update.message.reply_text("✅ پیام همگانی با موفقیت ارسال شد.")
             except Exception as e:
                 await update.message.reply_text(f"❌ خطا در ارسال پیام همگانی: {e}")
             return
@@ -985,7 +993,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # --------------------------------------
-    # STATS & OVERALL USER STATUS (فقط کلمه دقیق)
+    # STATS & OVERALL USER STATUS (مطابق JSON و دیزاین جدید)
     # --------------------------------------
     is_asking_own_stats = clean_raw in ["آمارم", "آمار من", "وضعیت من"]
     is_asking_other_stats = clean_raw in ["اوضاع این", "اوضاعش", "آمار این", "وضعیت این", "وضعیت"] and update.message.reply_to_message
@@ -993,35 +1001,36 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_asking_own_stats or is_asking_other_stats:
         if is_asking_own_stats:
             target_id = user_id
-            header_str = "<b><tg-emoji emoji-id=\"5375056987174216702\">😏</tg-emoji> آمار شما به شرح ذیل می‌باشد :</b>\n\n"
+            header_str = '<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار شما به شرح ذیل می‌باشد :</b>\n\n'
         else:
             target_user = update.message.reply_to_message.from_user
             target_id = target_user.id
-            header_str = f"<b><tg-emoji emoji-id=\"5375056987174216702\">😏</tg-emoji> آمار {get_user_mention(target_id, target_user.full_name)} به شرح ذیل می‌باشد :</b>\n\n"
+            header_str = f'<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار {get_user_mention(target_id, target_user.full_name)} به شرح ذیل می‌باشد :</b>\n\n'
 
         stats_msg = (
             f"{header_str}"
-            f"<b><tg-emoji emoji-id=\"5433681959324754801\">💩</tg-emoji> تعداد گوه‌خوری : {get_user_stat(db, target_id, 'goh_khori')}</b>\n"
-            f"<b><tg-emoji emoji-id=\"5863828384332647680\">👅</tg-emoji> تعداد کصلیسی : {get_user_stat(db, target_id, 'kos_lisi')}</b>\n"
-            f"<b><tg-emoji emoji-id=\"5429327730070009271\">🤲</tg-emoji> تعداد خایمالی : {get_user_stat(db, target_id, 'khaymali')}</b>\n"
-            f"<b><tg-emoji emoji-id=\"5983342699816685361\">👑</tg-emoji> تعداد جندگی : {get_user_stat(db, target_id, 'jendegi')}</b>\n"
-            f"<b><tg-emoji emoji-id=\"5886539179256450622\">🤪</tg-emoji> تعداد کصخلی : {get_user_stat(db, target_id, 'kos_khali')}</b>\n"
-            f"<b><tg-emoji emoji-id=\"5195297917048462460\">🍌</tg-emoji> تعداد جقی بودن : {get_user_stat(db, target_id, 'jaghi')}</b>\n"
-            f"<b><tg-emoji emoji-id=\"5922483378304586599\">🐙</tg-emoji> تعداد کونی بودن : {get_user_stat(db, target_id, 'koni')}</b>\n"
-            f"<b><tg-emoji emoji-id=\"5283151000641757020\">😎</tg-emoji> تعداد خوژتیپ شدن : {get_user_stat(db, target_id, 'handsome')}</b>\n"
-            f"<b><tg-emoji emoji-id=\"5406926593698312391\">❤️</tg-emoji> تعداد کاپل شدن : {get_user_stat(db, target_id, 'ship')}</b>\n"
-            f"<b><tg-emoji emoji-id=\"5854843712181378616\">🏆</tg-emoji> تعداد پر حرف بودن : {get_user_stat(db, target_id, 'goh_khor_hour')}</b>"
+            f'<b><tg-emoji emoji-id="5433681959324754801">💩</tg-emoji> تعداد گوه‌خوری : {get_user_stat(db, target_id, "goh_khori")}</b>\n'
+            f'<b><tg-emoji emoji-id="5863828384332647680">👅</tg-emoji> تعداد کصلیسی : {get_user_stat(db, target_id, "kos_lisi")}</b>\n'
+            f'<b><tg-emoji emoji-id="5429327730070009271">🤲</tg-emoji> تعداد خایمالی : {get_user_stat(db, target_id, "khaymali")}</b>\n'
+            f'<b><tg-emoji emoji-id="5983342699816685361">👑</tg-emoji> تعداد جندگی : {get_user_stat(db, target_id, "jendegi")}</b>\n'
+            f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> تعداد کصخلی : {get_user_stat(db, target_id, "kos_khali")}</b>\n'
+            f'<b><tg-emoji emoji-id="5195297917048462460">🍌</tg-emoji> تعداد جقی بودن : {get_user_stat(db, target_id, "jaghi")}</b>\n'
+            f'<b><tg-emoji emoji-id="5922483378304586599">🐙</tg-emoji> تعداد کونی بودن : {get_user_stat(db, target_id, "koni")}</b>\n'
+            f'<b><tg-emoji emoji-id="5314297755579986373">😊</tg-emoji> تعداد سکسی شدن : {get_user_stat(db, target_id, "sexy")}</b>\n'
+            f'<b><tg-emoji emoji-id="5771442740147523468">❤️</tg-emoji> تعداد جذاب شدن : {get_user_stat(db, target_id, "jazab")}</b>\n'
+            f'<b><tg-emoji emoji-id="5283151000641757020">😎</tg-emoji> تعداد خوژتیپ شدن : {get_user_stat(db, target_id, "handsome")}</b>\n'
+            f'<b><tg-emoji emoji-id="5406926593698312391">❤️</tg-emoji> تعداد کاپل شدن : {get_user_stat(db, target_id, "ship")}</b>\n'
+            f'<b><tg-emoji emoji-id="5854843712181378616">🏆</tg-emoji> تعداد پر حرف بودن : {get_user_stat(db, target_id, "goh_khor_hour")}</b>'
         )
         await update.message.reply_text(stats_msg, parse_mode=ParseMode.HTML)
         return
 
     # --------------------------------------
-    # GENERAL PERCENTAGE SYSTEM (شروع با درصد یا این چقدر)
+    # GENERAL PERCENTAGE SYSTEM
     # --------------------------------------
     if clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد "):
         target_u = update.message.reply_to_message.from_user if update.message.reply_to_message else update.effective_user
-        
-        topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").replace(" بودن", "").strip()
+        topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").strip()
         val = random.randint(0, 100)
         
         rand_emoji_id = random.choice([
@@ -1044,6 +1053,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "آمریکا": ("America/New_York", "5927292517610426176", "🇺🇸"),
         "امریکا": ("America/New_York", "5927292517610426176", "🇺🇸"),
         "آلمان": ("Europe/Berlin", "5409360418520967565", "🇩🇪"),
+        "انگلیس": ("Europe/London", "5409360418520967565", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
         "ترکیه": ("Europe/Istanbul", "6136551252781172945", "🇹🇷"),
         "هندوستان": ("Asia/Kolkata", "5202079966761590204", "🇮🇳"),
         "هند": ("Asia/Kolkata", "5202079966761590204", "🇮🇳"),
@@ -1066,27 +1076,39 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f'<b><tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji> ساعت {c_name}: <code>{c_time}</code></b>', parse_mode=ParseMode.HTML)
             return
 
-    # ۱. ساعت جهانی کامل
+    # ۱. ساعت جهانی کامل (هر ۱۴ کشور طبق JSON جدید)
     if norm_text in ["ساعت جهانی", "ساعت"] and features.get("world_time", True):
         now_tehran = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%H:%M:%S")
         now_ny = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
         now_germany = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%H:%M:%S")
+        now_london = datetime.now(ZoneInfo("Europe/London")).strftime("%H:%M:%S")
         now_istanbul = datetime.now(ZoneInfo("Europe/Istanbul")).strftime("%H:%M:%S")
         now_mumbai = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
         now_riyadh = datetime.now(ZoneInfo("Asia/Riyadh")).strftime("%H:%M:%S")
         now_paris = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
         now_beijing = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%H:%M:%S")
+        now_hanoi = datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%H:%M:%S")
+        now_doha = datetime.now(ZoneInfo("Asia/Qatar")).strftime("%H:%M:%S")
+        now_seoul = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M:%S")
+        now_tokyo = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M:%S")
+        now_helsinki = datetime.now(ZoneInfo("Europe/Helsinki")).strftime("%H:%M:%S")
 
         msg = (
             '<b><tg-emoji emoji-id="5399898266265475100">🌍</tg-emoji> ساعت جهانی برخی از کشورها :</b>\n\n'
             f'<b><tg-emoji emoji-id="5271878966347601947">🇮🇷</tg-emoji> ایران: {now_tehran}</b>\n'
             f'<b><tg-emoji emoji-id="5927292517610426176">🇺🇸</tg-emoji> آمریکا: {now_ny}</b>\n'
             f'<b><tg-emoji emoji-id="5409360418520967565">🇩🇪</tg-emoji> آلمان: {now_germany}</b>\n'
+            f'<b><tg-emoji emoji-id="5409360418520967565">🏴󠁧󠁢󠁥󠁮󠁧󠁿</tg-emoji> انگلیس: {now_london}</b>\n'
             f'<b><tg-emoji emoji-id="6136551252781172945">🇹🇷</tg-emoji> ترکیه: {now_istanbul}</b>\n'
             f'<b><tg-emoji emoji-id="5202079966761590204">🇮🇳</tg-emoji> هندوستان: {now_mumbai}</b>\n'
             f'<b><tg-emoji emoji-id="5931269906434624310">🇸🇦</tg-emoji> عربستان: {now_riyadh}</b>\n'
             f'<b><tg-emoji emoji-id="5431782733376399004">🇫🇷</tg-emoji> فرانسه: {now_paris}</b>\n'
-            f'<b><tg-emoji emoji-id="5226948110873278599">🇨🇳</tg-emoji> چین: {now_beijing}</b>'
+            f'<b><tg-emoji emoji-id="5226948110873278599">🇨🇳</tg-emoji> چین: {now_beijing}</b>\n'
+            f'<b><tg-emoji emoji-id="5474542319673812606">🇻🇳</tg-emoji> ویتنام: {now_hanoi}</b>\n'
+            f'<b><tg-emoji emoji-id="5228799250367788944">🇶🇦</tg-emoji> قطر: {now_doha}</b>\n'
+            f'<b><tg-emoji emoji-id="5456531898304047227">🇰🇷</tg-emoji> کره جنوبی: {now_seoul}</b>\n'
+            f'<b><tg-emoji emoji-id="5456261908069885892">🇯🇵</tg-emoji> ژاپن: {now_tokyo}</b>\n'
+            f'<b><tg-emoji emoji-id="5382151560182642075">🇫🇮</tg-emoji> فنلاند: {now_helsinki}</b>'
         )
         await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -1243,6 +1265,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tid, info = m_tuple
                 target_mention = get_user_mention(int(tid), info["fullname"])
                 set_cooldown_data(db, chat_id, "sexy", {"id": int(tid), "fullname": info["fullname"]})
+                increment_user_stat(db, int(tid), "sexy")
                 
                 msg = (
                     f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه :</b>\n\n'
@@ -1269,6 +1292,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tid, info = m_tuple
                 target_mention = get_user_mention(int(tid), info["fullname"])
                 set_cooldown_data(db, chat_id, "jazab", {"id": int(tid), "fullname": info["fullname"]})
+                increment_user_stat(db, int(tid), "jazab")
                 
                 msg = (
                     f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه :</b>\n\n'
@@ -1284,11 +1308,21 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             m_rem = rem_sec // 60
             name1 = get_user_mention(cd_data["u1"]["id"], cd_data["u1"]["name"])
             name2 = get_user_mention(cd_data["u2"]["id"], cd_data["u2"]["name"])
+            
+            # بازخوانی رای‌های واقعی از پیام قبلی
+            last_msg_id = cd_data.get("last_msg_id")
+            couple_data = db.get("couples", {}).get(str(last_msg_id), {}) if last_msg_id else {}
+            agrees = couple_data.get("agrees", [])
+            disagrees = couple_data.get("disagrees", [])
+
+            agrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in agrees]) if agrees else "هیچکس"
+            disagrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in disagrees]) if disagrees else "هیچکس"
+
             msg = (
                 f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
                 f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
-                f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان ثبت شده: هیچکس</b>\n'
-                f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان ثبت شده : هیچکس</b>\n\n'
+                f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان ثبت شده: {agrees_text}</b>\n'
+                f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان ثبت شده : {disagrees_text}</b>\n\n'
                 f'<b>+ {m_rem} دقیقه دیگه کاپل بعدیو میگم بچهااااا!<tg-emoji emoji-id="5816460319601467354">😺</tg-emoji></b>'
             )
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -1329,7 +1363,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "disagrees": [],
                     "created_at": datetime.now().timestamp()
                 }
-                set_cooldown_data(db, chat_id, "ship", {"u1": u1_dict, "u2": u2_dict})
+                set_cooldown_data(db, chat_id, "ship", {"u1": u1_dict, "u2": u2_dict, "last_msg_id": sent_msg.message_id})
             else:
                 await update.message.reply_text("❌ اعضای کافی موجود نیست!")
 
