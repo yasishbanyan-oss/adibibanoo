@@ -462,7 +462,7 @@ def build_xo_keyboard(game_id: str, board: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 # ==========================================
-# DWOZ / TIC-TAC-TOE INDEPENDENT LOGIC
+# DWOZ / TIC-TAC-TOE INDEPENDENT LOGIC (با ایموجی پریمیوم)
 # ==========================================
 async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -489,9 +489,9 @@ async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_db()
 
         txt = (
-            "<b>⚡️ میبینم به یکم هیجان نیاز دارین! 😻</b>\n\n"
-            "<b>آماده بازی دوز هستین بچهااااا؟ ⏳</b>\n\n"
-            "<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>"
+            '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+            '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
+            '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
         )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
@@ -531,7 +531,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Coming soon..!", show_alert=True)
         return
 
-    # ۲. دوز آنلاین (با ثبت کامل اسامی)
+    # ۲. دوز آنلاین (با ایموجی پریمیوم کامل)
     elif data.startswith("xo_"):
         parts = data.split(":")
         act = parts[0]
@@ -551,7 +551,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             del games[game_id]
             mark_db_dirty()
             save_db()
-            await query.message.edit_text('<b>حله! هروقت خواستید من اینجام تا راوی رقابت شما باشم! 🛠</b>', parse_mode=ParseMode.HTML)
+            await query.message.edit_text('<b>حله! هروقت خواستید من اینجام تا راوی رقابت شما باشم! <tg-emoji emoji-id="5816531766382436821">🛠</tg-emoji></b>', parse_mode=ParseMode.HTML)
             return
 
         elif act == "xo_leave":
@@ -561,7 +561,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             del games[game_id]
             mark_db_dirty()
             save_db()
-            await query.message.edit_text('<b>حله! هروقت خواستید من اینجام تا راوی رقابت شما باشم! 🛠</b>', parse_mode=ParseMode.HTML)
+            await query.message.edit_text('<b>حله! هروقت خواستید من اینجام تا راوی رقابت شما باشم! <tg-emoji emoji-id="5816531766382436821">🛠</tg-emoji></b>', parse_mode=ParseMode.HTML)
             return
 
         elif act == "xo_join":
@@ -578,10 +578,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
                 m1 = get_user_mention(user_id, query.from_user.full_name)
                 txt = (
-                    '<b>⚡️ میبینم به یکم هیجان نیاز دارین! 😻</b>\n\n'
-                    '<b>آماده بازی دوز هستین بچهااااا؟ ⏳</b>\n\n'
+                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
                     f'<b>شرکت کنندگان :</b>\n<b>{m1}</b>\n\n'
-                    '<b>- یک نفر دیگه تموممممه! کسی نبودد؟ 🔥</b>\n'
+                    '<b>- یک نفر دیگه تموممممه! کسی نبودد؟ <tg-emoji emoji-id="5431776939465516694">🔥</tg-emoji></b>\n'
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
@@ -601,10 +601,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 m1 = get_user_mention(game["p1_id"], game["p1_name"])
                 m2 = get_user_mention(game["p2_id"], game["p2_name"])
                 txt = (
-                    '<b>⚡️ میبینم به یکم هیجان نیاز دارین! 😻</b>\n\n'
-                    '<b>آماده بازی دوز هستین بچهااااا؟ ⏳</b>\n\n'
+                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
                     f'<b>شرکت کنندگان :</b>\n<b>{m1}</b>\n<b>{m2}</b>\n\n'
-                    '<b>🚬 اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
+                    '<b><tg-emoji emoji-id="5474531397571986677">🚬</tg-emoji> اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
                 )
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("شروع بازی 🎮", callback_data=f"xo_start:{game_id}")]
@@ -623,7 +623,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             mark_db_dirty()
             save_db()
 
-            txt = '<b>بازی شروع شد! ببینیم برنده میدان کیه! 🕹</b>'
+            txt = '<b>بازی شروع شد! ببینیم برنده میدان کیه! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>'
             kb = build_xo_keyboard(game_id, game["board"])
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             return
@@ -661,7 +661,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 if winner_symbol == "draw":
                     res_txt = (
                         '<b>اوووه! میبینم که بازی تموم شده!</b>\n'
-                        '<b>- ای بابا حیف شد ، دو طرف خیلی قوی بودن و بازی مساوی شد. 🦸‍♀️</b>'
+                        '<b>- ای بابا حیف شد ، دو طرف خیلی قوی بودن و بازی مساوی شد. <tg-emoji emoji-id="5870693988339553767">🦸‍♀️</tg-emoji></b>'
                     )
                 else:
                     winner_id = game["p1_id"] if winner_symbol == "O" else game["p2_id"]
@@ -669,7 +669,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     w_mention = get_user_mention(winner_id, winner_name)
                     res_txt = (
                         '<b>اوووه! میبینم که بازی تموم شده!</b>\n'
-                        f'<b>- بازی با برتری بازیکن {w_mention} به اتمام رسید. 😈</b>'
+                        f'<b>- بازی با برتری بازیکن {w_mention} به اتمام رسید. <tg-emoji emoji-id="5866225658983617570">😈</tg-emoji></b>'
                     )
 
                 try:
@@ -1234,7 +1234,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # DODOL / FUN RESPONSE با ایموجی پریمیوم
+        # DODOL / FUN RESPONSE با اصلاح ASCII ART
         # --------------------------------------
         if DODOL_PATTERN.search(raw_text):
             ascii_penis = (
@@ -1243,16 +1243,16 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿ military⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵稳⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿ challenge⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿\n"
@@ -1260,7 +1260,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⡿⠋⠄⠄⠄⠄⢀⠒⠝⣞⢿⡿⣿⣽⢿⡽⣧⣳⡅⠌⠻⣿\n"
                 "⠁⠄⠄⠄⠄⠄⠐⡐⠱⡱⣻⡻⣝⣮⣟⣿⣿⣿⣿⣿⣿⣿"
             )
-            msg1 = await update.message.reply_text(f"<code>{ascii_penis}</code>", parse_mode=ParseMode.HTML)
+            # پاک‌سازی کامل هر کاراکتر انگلیسی اضافه که وسط آرکی افتاده باشد
+            clean_ascii = re.sub(r"[a-zA-Z]+", "", ascii_penis)
+            msg1 = await update.message.reply_text(f"<code>{clean_ascii}</code>", parse_mode=ParseMode.HTML)
             await msg1.reply_text('<b>میخوریش برام؟؟ <tg-emoji emoji-id="5431423351987916271">👅</tg-emoji></b>', parse_mode=ParseMode.HTML)
             return
 
@@ -1272,6 +1274,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.reply_to_message.from_user and 
             update.message.reply_to_message.from_user.id == context.bot.id
         )
+
+        # دفاع خودکار گودی در درصدگیری (اگر روی ربات ریپلای بزنند)
+        if is_reply_to_bot and (clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد ")):
+            topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").replace("ش", "").replace("ه", "").strip()
+            topic_clean = html.escape(topic)
+            await update.message.reply_text(f"<b>{topic_clean} خودتی!</b>", parse_mode=ParseMode.HTML)
+            return
 
         if is_reply_to_bot and clean_raw in ["تو کی هستی", "تو کی هستی؟"]:
             await update.message.reply_text('<b>من گودی هستم خوشگله! <tg-emoji emoji-id="5321415182109401472">😽</tg-emoji></b>', parse_mode=ParseMode.HTML)
@@ -1459,7 +1468,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f'<b><tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji> ساعت {c_name}: <code>{c_time}</code></b>', parse_mode=ParseMode.HTML)
                 return
 
-        # ۱. ساعت جهانی کامل هر ۱۴ کشور با ایموجی پریمیوم
+        # ۱. ساعت جهانی کامل با دستورات «ساعت» و «ساعت جهانی»
         if norm_text in ["ساعت جهانی", "ساعت"] and features.get("world_time", True):
             now_tehran = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%H:%M:%S")
             now_ny = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
@@ -1760,7 +1769,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۱۱. سیستم شعرخوانی
+        # ۱۱. سیستم شعرخوانی همراه با ایموجی پریمیوم قلم ✍️
         elif norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
             custom_names = db.get("custom_names", [])
             if custom_names:
@@ -1776,7 +1785,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             all_poems = db.get("poems", DEFAULT_POEMS)
             poem_template = random.choice(all_poems)
             final_poem = poem_template.format(name=target_name)
-            await update.message.reply_text(f"📜 <b>{final_poem}</b>", parse_mode=ParseMode.HTML)
+            await update.message.reply_text(f'<tg-emoji emoji-id="5859527571586161695">✍️</tg-emoji> <b>{final_poem}</b>', parse_mode=ParseMode.HTML)
 
         # ۱۲. تشخیص «لف»
         elif LEF_PATTERN.search(raw_text) and features.get("lef", True):
@@ -1814,7 +1823,7 @@ def main():
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
-    # 1. اختصاصی برای بازی دوز با بالاترین اولویت (group=-1) و بدون پریمیوم
+    # 1. اختصاصی برای بازی دوز با بالاترین اولویت (group=-1)
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler),
         group=-1
