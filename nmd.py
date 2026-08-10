@@ -459,10 +459,12 @@ def build_xo_keyboard(game_id: str, board: list) -> InlineKeyboardMarkup:
             val = symbols.get(board[j], "⬜️")
             row.append(InlineKeyboardButton(val, callback_data=f"xo_move:{game_id}:{j}"))
         buttons.append(row)
+    # دکمه تسلیم در زمان بازی
+    buttons.append([InlineKeyboardButton("🏴 تسلیم", callback_data=f"xo_surrender:{game_id}")])
     return InlineKeyboardMarkup(buttons)
 
 # ==========================================
-# DWOZ / TIC-TAC-TOE INDEPENDENT LOGIC (با ایموجی پریمیوم)
+# DWOZ / TIC-TAC-TOE INDEPENDENT LOGIC
 # ==========================================
 async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -531,7 +533,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Coming soon..!", show_alert=True)
         return
 
-    # ۲. دوز آنلاین (با ایموجی پریمیوم کامل)
+    # ۲. دوز آنلاین
     elif data.startswith("xo_"):
         parts = data.split(":")
         act = parts[0]
@@ -555,13 +557,40 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         elif act == "xo_leave":
-            if user_id != game["p1_id"]:
+            if user_id == game.get("p1_id"):
+                game["p1_id"] = None
+                game["p1_name"] = None
+            elif user_id == game.get("p2_id"):
+                game["p2_id"] = None
+                game["p2_name"] = None
+            else:
                 await query.answer("شما عضو این میز نیستید!", show_alert=True)
                 return
-            del games[game_id]
+
+            db["xo_games"][game_id] = game
             mark_db_dirty()
             save_db()
-            await query.message.edit_text('<b>حله! هروقت خواستید من اینجام تا راوی رقابت شما باشم! <tg-emoji emoji-id="5816531766382436821">🛠</tg-emoji></b>', parse_mode=ParseMode.HTML)
+
+            m1_txt = get_user_mention(game["p1_id"], game["p1_name"]) if game.get("p1_id") else ""
+            m2_txt = get_user_mention(game["p2_id"], game["p2_name"]) if game.get("p2_id") else ""
+            
+            signers = []
+            if m1_txt: signers.append(m1_txt)
+            if m2_txt: signers.append(m2_txt)
+            signers_str = "\n".join(signers) if signers else "هیچکس"
+
+            txt = (
+                '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+                '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
+                f'<b>شرکت کنندگان :</b>\n<b>{signers_str}</b>\n\n'
+                '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
+                [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
+            ])
+            await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+            await query.answer("شما از بازی انصراف دادید.")
             return
 
         elif act == "xo_join":
@@ -572,11 +601,29 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             if not game.get("p1_id"):
                 game["p1_id"] = user_id
                 game["p1_name"] = query.from_user.full_name
-                db["xo_games"][game_id] = game
-                mark_db_dirty()
-                save_db()
+            elif not game.get("p2_id"):
+                game["p2_id"] = user_id
+                game["p2_name"] = query.from_user.full_name
 
-                m1 = get_user_mention(user_id, query.from_user.full_name)
+            db["xo_games"][game_id] = game
+            mark_db_dirty()
+            save_db()
+
+            m1 = get_user_mention(game["p1_id"], game["p1_name"]) if game.get("p1_id") else ""
+            m2 = get_user_mention(game["p2_id"], game["p2_name"]) if game.get("p2_id") else ""
+
+            if game.get("p1_id") and game.get("p2_id"):
+                txt = (
+                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
+                    f'<b>شرکت کنندگان :</b>\n<b>{m1}</b>\n<b>{m2}</b>\n\n'
+                    '<b><tg-emoji emoji-id="5474531397571986677">🚬</tg-emoji> اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
+                )
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("شروع بازی 🎮", callback_data=f"xo_start:{game_id}")],
+                    [InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}")]
+                ])
+            else:
                 txt = (
                     '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
                     '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
@@ -585,36 +632,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
-                    [InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}")]
+                    [InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}")],
+                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
                 ])
-                await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-                return
 
-            elif not game.get("p2_id"):
-                game["p2_id"] = user_id
-                game["p2_name"] = query.from_user.full_name
-                db["xo_games"][game_id] = game
-                mark_db_dirty()
-                save_db()
-
-                m1 = get_user_mention(game["p1_id"], game["p1_name"])
-                m2 = get_user_mention(game["p2_id"], game["p2_name"])
-                txt = (
-                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
-                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
-                    f'<b>شرکت کنندگان :</b>\n<b>{m1}</b>\n<b>{m2}</b>\n\n'
-                    '<b><tg-emoji emoji-id="5474531397571986677">🚬</tg-emoji> اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
-                )
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شروع بازی 🎮", callback_data=f"xo_start:{game_id}")]
-                ])
-                await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-                return
+            await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+            return
 
         elif act == "xo_start":
-            if user_id not in [game["p1_id"], game["p2_id"]]:
-                await query.answer("فقط بازیکنان ثبت‌نام‌شده می‌توانند بازی را شروع کنند!", show_alert=True)
+            if user_id != game.get("p1_id"):
+                await query.answer("شما توانایی شروع بازی را ندارید.", show_alert=True)
                 return
 
             game["status"] = "playing"
@@ -626,6 +653,29 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             txt = '<b>بازی شروع شد! ببینیم برنده میدان کیه! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>'
             kb = build_xo_keyboard(game_id, game["board"])
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+            return
+
+        elif act == "xo_surrender":
+            if user_id not in [game.get("p1_id"), game.get("p2_id")]:
+                await query.answer("شما جزو بازیکنان این بازی نیستید!", show_alert=True)
+                return
+
+            surrender_user = query.from_user.full_name
+            winner_id = game["p2_id"] if user_id == game["p1_id"] else game["p1_id"]
+            winner_name = game["p2_name"] if user_id == game["p1_id"] else game["p1_name"]
+            
+            del games[game_id]
+            mark_db_dirty()
+            save_db()
+
+            s_mention = get_user_mention(user_id, surrender_user)
+            w_mention = get_user_mention(winner_id, winner_name)
+
+            txt = (
+                f'<b>اوووه! بازیکن {s_mention} تسلیم شد! <tg-emoji emoji-id="5816531766382436821">🛠</tg-emoji></b>\n'
+                f'<b>- بازی با برتری بازیکن {w_mention} به اتمام رسید. <tg-emoji emoji-id="5866225658983617570">😈</tg-emoji></b>'
+            )
+            await query.message.edit_text(txt, parse_mode=ParseMode.HTML)
             return
 
         elif act == "xo_move":
@@ -691,7 +741,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     pass
                 return
 
-    # ۳. سیستم گزارش با ایموجی پریمیوم
+    # ۳. سیستم گزارش
     elif data.startswith("report_"):
         rep_id = data.replace("report_resolve:", "").replace("report_cancel:", "")
         reports = db.get("reports", {})
@@ -728,7 +778,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.edit_text(txt, parse_mode=ParseMode.HTML)
             return
 
-    # ۴. امضای شاهدان با ایموجی پریمیوم
+    # ۴. امضای شاهدان
     if data.startswith("sign_action:"):
         rec_id = data.replace("sign_action:", "")
         records = db.get("action_records", {})
@@ -795,7 +845,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("اطلاعات یافت نشد!", show_alert=True)
         return
 
-    # ۶. کاپل با ایموجی پریمیوم
+    # ۶. کاپل
     elif data in ["couple_agree", "couple_disagree"]:
         msg_id = str(query.message.message_id)
         couples = db.get("couples", {})
@@ -1245,22 +1295,21 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵稳⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢨⣫⣿⣿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢜⢾⣾⣿⣿⣟⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵ barrier⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿ challenge⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿ battlefield⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿\n"
                 "⣿⣿⠛⠉⠁⠄⢕⡳⣽⡾⣿⢽⣯⡿⣮⢚⣅⠹⣿⣿⣿\n"
                 "⡿⠋⠄⠄⠄⠄⢀⠒⠝⣞⢿⡿⣿⣽⢿⡽⣧⣳⡅⠌⠻⣿\n"
                 "⠁⠄⠄⠄⠄⠄⠐⡐⠱⡱⣻⡻⣝⣮⣟⣿⣿⣿⣿⣿⣿⣿"
             )
-            # پاک‌سازی کامل هر کاراکتر انگلیسی اضافه که وسط آرکی افتاده باشد
             clean_ascii = re.sub(r"[a-zA-Z]+", "", ascii_penis)
             msg1 = await update.message.reply_text(f"<code>{clean_ascii}</code>", parse_mode=ParseMode.HTML)
             await msg1.reply_text('<b>میخوریش برام؟؟ <tg-emoji emoji-id="5431423351987916271">👅</tg-emoji></b>', parse_mode=ParseMode.HTML)
@@ -1275,11 +1324,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.reply_to_message.from_user.id == context.bot.id
         )
 
-        # دفاع خودکار گودی در درصدگیری (اگر روی ربات ریپلای بزنند)
+        # دفاع خودکار گودی با ایموجی پریمیوم
         if is_reply_to_bot and (clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد ")):
             topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").replace("ش", "").replace("ه", "").strip()
             topic_clean = html.escape(topic)
-            await update.message.reply_text(f"<b>{topic_clean} خودتی!</b>", parse_mode=ParseMode.HTML)
+            await update.message.reply_text(
+                f'<b>{topic_clean} خودتی! <tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji></b>',
+                parse_mode=ParseMode.HTML
+            )
             return
 
         if is_reply_to_bot and clean_raw in ["تو کی هستی", "تو کی هستی؟"]:
