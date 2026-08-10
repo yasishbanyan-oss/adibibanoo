@@ -11,6 +11,7 @@ import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import aiohttp
 
 from telegram import (
     Update,
@@ -75,6 +76,28 @@ DODOL_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# الگوی تشخیص استعلام و محاسبه ارزها
+CRYPTO_PATTERN = re.compile(
+    r"^\s*(?P<amount>[\d\.\u0660-\u0669\u06f0-\u06f9]+)?\s*(?P<currency>ترون|تون|گرام|تتر|دلار)\s*$",
+    re.IGNORECASE
+)
+
+PERSIAN_PERMUTATIONS = {
+    '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
+    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
+}
+
+def fa_to_en_digits(text: str) -> str:
+    if not text:
+        return "1"
+    res = "".join(PERSIAN_PERMUTATIONS.get(ch, ch) for ch in text)
+    try:
+        val = float(res)
+        return str(int(val)) if val.is_integer() else str(val)
+    except ValueError:
+        return "1"
+
 def normalize_text(text: str) -> str:
     if not text:
         return ""
@@ -86,6 +109,38 @@ def normalize_text(text: str) -> str:
     text = re.sub(r"ی{2,}", "ی", text)
     words = text.strip().split()
     return " ".join(words)
+
+def get_persian_date_str():
+    weekdays = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه", "شنبه", "یکشنبه"]
+    now = datetime.now(ZoneInfo("Asia/Tehran"))
+    wd = weekdays[now.weekday()]
+    time_str = now.strftime("%H:%M")
+    return f"{wd} ، ساعت {time_str}"
+
+# ==========================================
+# FETCH CRYPTO & CURRENCY PRICES
+# ==========================================
+async def get_live_prices():
+    # قیمت‌های فال‌بک مطمئن در صورت قطع API
+    prices = {
+        "USD_IRT": 60000,
+        "TRX_USD": 0.12,
+        "TON_USD": 5.5
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://api.nobitex.ir/v2/orderbook/all", timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if "USDTIRT" in data:
+                        prices["USD_IRT"] = float(data["USDTIRT"]["lastTradePrice"]) / 10
+                    if "TRXUSDT" in data:
+                        prices["TRX_USD"] = float(data["TRXUSDT"]["lastTradePrice"]) / float(data["USDTIRT"]["lastTradePrice"])
+                    if "TONUSDT" in data:
+                        prices["TON_USD"] = float(data["TONUSDT"]["lastTradePrice"]) / float(data["USDTIRT"]["lastTradePrice"])
+    except Exception:
+        pass
+    return prices
 
 # ==========================================
 # GLOBAL DB CACHE & DIRTY FLAG
@@ -1129,6 +1184,77 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         norm_text = normalize_text(raw_text)
 
         # --------------------------------------
+        # HANDLER PRICE / CRYPTO CALCULATOR
+        # --------------------------------------
+        match_crypto = CRYPTO_PATTERN.match(raw_text)
+        if match_crypto:
+            amount_raw = match_crypto.group("amount")
+            curr_raw = match_crypto.group("currency").strip().lower()
+
+            amount_val = float(fa_to_en_digits(amount_raw)) if amount_raw else 1.0
+            
+            prices = await get_live_prices()
+            usd_irt = prices["USD_IRT"]
+            trx_usd = prices["TRX_USD"]
+            ton_usd = prices["TON_USD"]
+
+            date_str = get_persian_date_str()
+
+            if curr_raw in ["ترون"]:
+                tot_usd = amount_val * trx_usd
+                tot_irt = tot_usd * usd_irt
+                usd_f = f"{tot_usd:,.2f}" if tot_usd < 1000 else f"{int(tot_usd):,}"
+                irt_f = f"{int(tot_irt):,}"
+
+                msg = (
+                    f'<b><tg-emoji emoji-id="6032713293049633080">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} ترون در بازار آزاد :</b>\n\n'
+                    f'<b>‏┘─ <tg-emoji emoji-id="6030738741964840417">🪙</tg-emoji> دلار : {usd_f} </b>\n\n'
+                    f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
+                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                return
+
+            elif curr_raw in ["تون", "گرام"]:
+                tot_usd = amount_val * ton_usd
+                tot_irt = tot_usd * usd_irt
+                usd_f = f"{tot_usd:,.2f}" if tot_usd < 1000 else f"{int(tot_usd):,}"
+                irt_f = f"{int(tot_irt):,}"
+
+                msg = (
+                    f'<b><tg-emoji emoji-id="5873230707693723886">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} تون / گرام در بازار آزاد :</b>\n\n'
+                    f'<b>‏┘─ <tg-emoji emoji-id="6030738741964840417">🪙</tg-emoji> دلار : {usd_f} </b>\n\n'
+                    f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
+                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                return
+
+            elif curr_raw in ["تتر"]:
+                tot_irt = amount_val * usd_irt
+                irt_f = f"{int(tot_irt):,}"
+
+                msg = (
+                    f'<b><tg-emoji emoji-id="6030599829837586389">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} تتر به واحد پول ایران :</b>\n\n'
+                    f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
+                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                return
+
+            elif curr_raw in ["دلار"]:
+                tot_irt = amount_val * usd_irt
+                irt_f = f"{int(tot_irt):,}"
+
+                msg = (
+                    f'<b><tg-emoji emoji-id="6030599829837586389">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} دلار به واحد پول ایران :</b>\n\n'
+                    f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
+                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                return
+
+        # --------------------------------------
         # TEXT COMMAND 'پنل'
         # --------------------------------------
         if clean_raw == "پنل" and await is_admin_or_owner(context, chat_id, user_id):
@@ -1300,7 +1426,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⠃⠄挤⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
