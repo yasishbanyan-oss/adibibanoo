@@ -76,7 +76,6 @@ DODOL_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# الگوی تشخیص استعلام و محاسبه ارزها
 CRYPTO_PATTERN = re.compile(
     r"^\s*(?P<amount>[\d\.\u0660-\u0669\u06f0-\u06f9]+)?\s*(?P<currency>ترون|تون|گرام|تتر|دلار)\s*$",
     re.IGNORECASE
@@ -118,42 +117,50 @@ def get_persian_date_str():
     return f"{wd} ، ساعت {time_str}"
 
 # ==========================================
-# FETCH REAL-TIME CRYPTO & CURRENCY PRICES (REAL MARKET DATA)
+# FETCH REAL-TIME CRYPTO & CURRENCY PRICES
 # ==========================================
 async def get_live_prices():
-    # قیمت واقعی لحظه‌ای بازار (تتر ۱۸۵,۰۰۰ تومان، ترون ۰.۳۳ دلار)
     prices = {
-        "USD_IRT": 185000,
+        "USD_IRT": 186000,
         "TRX_USD": 0.3309,
-        "TON_USD": 6.80
+        "TON_USD": 1.324
     }
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
-    # ۱. دریافت قیمت دلاری ترون و تون از CoinGecko
+    # 1. دریافت قیمت دسیمل و لحظه‌ای تتر از نوبیتکس
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            url_cg = "https://api.coingecko.com/api/v3/simple/price?ids=tron,the-open-network,tether&vs_currencies=usd"
-            async with session.get(url_cg, timeout=5) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if "tron" in data: prices["TRX_USD"] = float(data["tron"]["usd"])
-                    if "the-open-network" in data: prices["TON_USD"] = float(data["the-open-network"]["usd"])
-    except Exception as e:
-        logger.error(f"CoinGecko Fetch Error: {e}")
-
-    # ۲. دریافت قیمت تومانی تتر از API مستقیم بدون تحریم
-    try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            url_api = "https://api.nobitex.ir/v2/orderbook/USDTIRT"
-            async with session.get(url_api, timeout=5) as resp:
+            url_nobitex = "https://api.nobitex.ir/v2/orderbook/USDTIRT"
+            async with session.get(url_nobitex, timeout=5) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     if "lastTradePrice" in data:
-                        raw_price = float(data["lastTradePrice"])
-                        # تبدیل ریال نوبیتکس به تومان (تقسیم بر ۱۰)
-                        prices["USD_IRT"] = raw_price / 10 if raw_price > 100000 else raw_price
+                        raw_p = float(data["lastTradePrice"])
+                        prices["USD_IRT"] = raw_p / 10 if raw_p > 500000 else raw_p
+                    elif "bids" in data and len(data["bids"]) > 0:
+                        raw_p = float(data["bids"][0][0])
+                        prices["USD_IRT"] = raw_p / 10 if raw_p > 500000 else raw_p
     except Exception as e:
-        logger.error(f"USDT Fetch Error: {e}")
+        logger.error(f"Nobitex USDT Fetch Error: {e}")
+
+    # 2. دریافت قیمت دقیق ترون و تون از CoinGecko
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            url_cg = "https://api.coingecko.com/api/v3/simple/price?ids=tron,the-open-network,toncoin,gram&vs_currencies=usd"
+            async with session.get(url_cg, timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if "tron" in data: 
+                        prices["TRX_USD"] = float(data["tron"]["usd"])
+                    
+                    if "gram" in data:
+                        prices["TON_USD"] = float(data["gram"]["usd"])
+                    elif "toncoin" in data:
+                        prices["TON_USD"] = float(data["toncoin"]["usd"])
+                    elif "the-open-network" in data:
+                        prices["TON_USD"] = float(data["the-open-network"]["usd"])
+    except Exception as e:
+        logger.error(f"CoinGecko Fetch Error: {e}")
 
     return prices
 
@@ -1218,7 +1225,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if curr_raw in ["ترون"]:
                 tot_usd = amount_val * trx_usd
                 tot_irt = tot_usd * usd_irt
-                usd_f = f"{tot_usd:,.2f}" if tot_usd < 1000 else f"{int(tot_usd):,}"
+                usd_f = f"{tot_usd:,.4f}" if tot_usd < 10 else f"{tot_usd:,.2f}"
                 irt_f = f"{int(tot_irt):,}"
 
                 msg = (
@@ -1233,7 +1240,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif curr_raw in ["تون", "گرام"]:
                 tot_usd = amount_val * ton_usd
                 tot_irt = tot_usd * usd_irt
-                usd_f = f"{tot_usd:,.2f}" if tot_usd < 1000 else f"{int(tot_usd):,}"
+                usd_f = f"{tot_usd:,.3f}" if tot_usd < 10 else f"{tot_usd:,.2f}"
                 irt_f = f"{int(tot_irt):,}"
 
                 msg = (
@@ -1443,7 +1450,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⠄⢔⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
