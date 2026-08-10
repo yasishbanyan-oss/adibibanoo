@@ -432,7 +432,7 @@ async def render_features_panel_message(query, db: dict):
         [InlineKeyboardButton(f"{status('lef')} 🖼 لف", callback_data="toggle_lef")],
         [InlineKeyboardButton(f"{status('goh_khor')} 🏆 گوه خور", callback_data="toggle_goh_khor")],
         [InlineKeyboardButton(f"{status('koni_percent')} 📊 درصد", callback_data="toggle_koni_percent")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_main")]
+        [InlineKeyboardButton("🔴 🔙 بازگشت", callback_data="panel_main")]
     ])
     await query.message.edit_text("⚙ <b>مدیریت قابلیت‌ها</b>\n\nبا کلیک روی هر دکمه، وضعیت آن را روشن یا خاموش کنید:", reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
@@ -459,8 +459,7 @@ def build_xo_keyboard(game_id: str, board: list) -> InlineKeyboardMarkup:
             val = symbols.get(board[j], "⬜️")
             row.append(InlineKeyboardButton(val, callback_data=f"xo_move:{game_id}:{j}"))
         buttons.append(row)
-    # دکمه تسلیم در زمان بازی
-    buttons.append([InlineKeyboardButton("🏴 تسلیم", callback_data=f"xo_surrender:{game_id}")])
+    buttons.append([InlineKeyboardButton("🔴 🏴 تسلیم", callback_data=f"xo_surrender:{game_id}")])
     return InlineKeyboardMarkup(buttons)
 
 # ==========================================
@@ -496,8 +495,8 @@ async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
-            [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
+            [InlineKeyboardButton("🟢 شرکت", callback_data=f"xo_join:{game_id}")],
+            [InlineKeyboardButton("🔴 بیخیال", callback_data=f"xo_cancel:{game_id}")]
         ])
         
         await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -586,8 +585,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
             )
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}")],
-                [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
+                [InlineKeyboardButton("🟢 شرکت", callback_data=f"xo_join:{game_id}")],
+                [InlineKeyboardButton("🔴 بیخیال", callback_data=f"xo_cancel:{game_id}")]
             ])
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             await query.answer("شما از بازی انصراف دادید.")
@@ -620,8 +619,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b><tg-emoji emoji-id="5474531397571986677">🚬</tg-emoji> اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شروع بازی 🎮", callback_data=f"xo_start:{game_id}")],
-                    [InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}")]
+                    [InlineKeyboardButton("🟢 شروع بازی 🎮", callback_data=f"xo_start:{game_id}")],
+                    [InlineKeyboardButton("🔴 انصراف", callback_data=f"xo_leave:{game_id}")]
                 ])
             else:
                 txt = (
@@ -632,8 +631,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}")],
-                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}")]
+                    [InlineKeyboardButton("🔴 انصراف", callback_data=f"xo_leave:{game_id}")],
+                    [InlineKeyboardButton("🛑 بیخیال", callback_data=f"xo_cancel:{game_id}")]
                 ])
 
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -935,7 +934,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 buttons.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"bcast_chat:{cid}")])
             except Exception:
                 pass
-        buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="panel_main")])
+        buttons.append([InlineKeyboardButton("🔴 🔙 بازگشت", callback_data="panel_main")])
         await query.message.edit_text("📢 <b>انتخاب گروه جهت ارسال پیام همگانی:</b>", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         return
 
@@ -971,7 +970,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("➕ افزودن غذا", callback_data="food_add")],
             [InlineKeyboardButton("➖ حذف غذا", callback_data="food_del")],
             [InlineKeyboardButton("📋 لیست غذاها", callback_data="food_page_1")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_main")]
+            [InlineKeyboardButton("🔴 🔙 بازگشت", callback_data="panel_main")]
         ])
         await query.message.edit_text("🍽 <b>مدیریت غذاها</b>\n\nگزینه مورد نظر را انتخاب کنید:", reply_markup=keyboard, parse_mode=ParseMode.HTML)
     elif data == "food_add":
@@ -1296,19 +1295,19 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢨⣫⣿⣿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢜⢾⣾⣿⣿⣟⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢸⢽⣿ military⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵ barrier⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿ battlefield⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿\n"
                 "⣿⣿⠛⠉⠁⠄⢕⡳⣽⡾⣿⢽⣯⡿⣮⢚⣅⠹⣿⣿⣿\n"
                 "⡿⠋⠄⠄⠄⠄⢀⠒⠝⣞⢿⡿⣿⣽⢿⡽⣧⣳⡅⠌⠻⣿\n"
-                "⠁⠄⠄⠄⠄⠄⠐⡐⠱⡱⣻⡻⣝⣮⣟⣿⣿⣿⣿⣿⣿⣿"
+                "⠁⠄⠄⠄⠄⠄⠐⡐⠱⡱⣻⡻ layout⣮⣟⣿⣿⣿⣿⣿⣿⣿"
             )
             clean_ascii = re.sub(r"[a-zA-Z]+", "", ascii_penis)
             msg1 = await update.message.reply_text(f"<code>{clean_ascii}</code>", parse_mode=ParseMode.HTML)
