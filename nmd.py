@@ -557,8 +557,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         elif act == "xo_leave":
             if user_id == game.get("p1_id"):
-                game["p1_id"] = None
-                game["p1_name"] = None
+                game["p1_id"] = game.get("p2_id")
+                game["p1_name"] = game.get("p2_name")
+                game["p2_id"] = None
+                game["p2_name"] = None
             elif user_id == game.get("p2_id"):
                 game["p2_id"] = None
                 game["p2_name"] = None
@@ -571,23 +573,30 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             save_db()
 
             m1_txt = get_user_mention(game["p1_id"], game["p1_name"]) if game.get("p1_id") else ""
-            m2_txt = get_user_mention(game["p2_id"], game["p2_name"]) if game.get("p2_id") else ""
-            
-            signers = []
-            if m1_txt: signers.append(m1_txt)
-            if m2_txt: signers.append(m2_txt)
-            signers_str = "\n".join(signers) if signers else "هیچکس"
 
-            txt = (
-                '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
-                '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
-                f'<b>شرکت کنندگان :</b>\n<b>{signers_str}</b>\n\n'
-                '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
-            )
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success")],
-                [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
-            ])
+            if m1_txt:
+                txt = (
+                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
+                    f'<b>شرکت کنندگان :</b>\n<b>{m1_txt}</b>\n\n'
+                    '<b>- یک نفر دیگه تموممممه! کسی نبودد؟ <tg-emoji emoji-id="5431776939465516694">🔥</tg-emoji></b>\n'
+                    '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
+                )
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
+                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                ])
+            else:
+                txt = (
+                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
+                    '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
+                )
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success")],
+                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                ])
+
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             await query.answer("شما از بازی انصراف دادید.")
             return
@@ -631,7 +640,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
+                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
                     [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
                 ])
 
@@ -1291,12 +1300,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⠃⠄挤⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄挤⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
