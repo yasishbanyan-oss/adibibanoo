@@ -76,6 +76,7 @@ DODOL_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# الگوی تشخیص استعلام و محاسبه ارزها
 CRYPTO_PATTERN = re.compile(
     r"^\s*(?P<amount>[\d\.\u0660-\u0669\u06f0-\u06f9]+)?\s*(?P<currency>ترون|تون|گرام|تتر|دلار)\s*$",
     re.IGNORECASE
@@ -117,17 +118,18 @@ def get_persian_date_str():
     return f"{wd} ، ساعت {time_str}"
 
 # ==========================================
-# FETCH REAL-TIME CRYPTO & CURRENCY PRICES
+# FETCH REAL-TIME CRYPTO & CURRENCY PRICES (REAL MARKET DATA)
 # ==========================================
 async def get_live_prices():
+    # قیمت واقعی لحظه‌ای بازار (تتر ۱۸۵,۰۰۰ تومان، ترون ۰.۳۳ دلار)
     prices = {
-        "USD_IRT": 61500,
-        "TRX_USD": 0.33,
+        "USD_IRT": 185000,
+        "TRX_USD": 0.3309,
         "TON_USD": 6.80
     }
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
-    # 1. گرفتن قیمت دلاری ترون و تون از CoinGecko
+    # ۱. دریافت قیمت دلاری ترون و تون از CoinGecko
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             url_cg = "https://api.coingecko.com/api/v3/simple/price?ids=tron,the-open-network,tether&vs_currencies=usd"
@@ -139,20 +141,19 @@ async def get_live_prices():
     except Exception as e:
         logger.error(f"CoinGecko Fetch Error: {e}")
 
-    # 2. گرفتن قیمت تومانی تتر از api والکس / نوبیتکس جهانی
+    # ۲. دریافت قیمت تومانی تتر از API مستقیم بدون تحریم
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            url_wallex = "https://api.wallex.ir/v1/currencies/stats"
-            async with session.get(url_wallex, timeout=5) as resp:
+            url_api = "https://api.nobitex.ir/v2/orderbook/USDTIRT"
+            async with session.get(url_api, timeout=5) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if data.get("success") and "result" in data:
-                        for coin in data["result"]:
-                            if coin.get("key") == "USDT":
-                                prices["USD_IRT"] = float(coin.get("price", 61500))
-                                break
+                    if "lastTradePrice" in data:
+                        raw_price = float(data["lastTradePrice"])
+                        # تبدیل ریال نوبیتکس به تومان (تقسیم بر ۱۰)
+                        prices["USD_IRT"] = raw_price / 10 if raw_price > 100000 else raw_price
     except Exception as e:
-        logger.error(f"Wallex Fetch Error: {e}")
+        logger.error(f"USDT Fetch Error: {e}")
 
     return prices
 
@@ -1217,7 +1218,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if curr_raw in ["ترون"]:
                 tot_usd = amount_val * trx_usd
                 tot_irt = tot_usd * usd_irt
-                usd_f = f"{tot_usd:,.4f}" if tot_usd < 10 else f"{tot_usd:,.2f}"
+                usd_f = f"{tot_usd:,.2f}" if tot_usd < 1000 else f"{int(tot_usd):,}"
                 irt_f = f"{int(tot_irt):,}"
 
                 msg = (
@@ -1232,7 +1233,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif curr_raw in ["تون", "گرام"]:
                 tot_usd = amount_val * ton_usd
                 tot_irt = tot_usd * usd_irt
-                usd_f = f"{tot_usd:,.2f}"
+                usd_f = f"{tot_usd:,.2f}" if tot_usd < 1000 else f"{int(tot_usd):,}"
                 irt_f = f"{int(tot_irt):,}"
 
                 msg = (
@@ -1437,7 +1438,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if DODOL_PATTERN.search(raw_text):
             ascii_penis = (
                 "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⣿⣿⣿⠟⠠ Host⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
