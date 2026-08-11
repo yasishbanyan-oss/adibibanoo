@@ -492,7 +492,7 @@ def build_xo_keyboard(game_id: str, board: list, is_finished: bool = False) -> I
         buttons.append(row)
     
     if not is_finished:
-        buttons.append([InlineKeyboardButton("⚰️ تسلیم", callback_data=f"xo_surrender:{game_id}", style="danger")])
+        buttons.append([InlineKeyboardButton("🏴 تسلیم", callback_data=f"xo_surrender:{game_id}", style="danger")])
     return InlineKeyboardMarkup(buttons)
 
 # ==========================================
@@ -528,8 +528,8 @@ async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📥 شرکت", callback_data=f"xo_join:{game_id}", style="success")],
-            [InlineKeyboardButton("😭 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+            [InlineKeyboardButton("🎮 شرکت", callback_data=f"xo_join:{game_id}", style="success")],
+            [InlineKeyboardButton("🚫 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
         ])
         
         await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -616,8 +616,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📥 شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("📤 انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
-                    [InlineKeyboardButton("😭 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                    [InlineKeyboardButton("🎮 شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("❌ انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
+                    [InlineKeyboardButton("🚫 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
                 ])
             else:
                 txt = (
@@ -626,8 +626,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📥 شرکت", callback_data=f"xo_join:{game_id}", style="success")],
-                    [InlineKeyboardButton("😭 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                    [InlineKeyboardButton("🎮 شرکت", callback_data=f"xo_join:{game_id}", style="success")],
+                    [InlineKeyboardButton("🚫 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
                 ])
 
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -661,8 +661,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b><tg-emoji emoji-id="5474531397571986677">🚬</tg-emoji> اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🏰 شروع بازی", callback_data=f"xo_start:{game_id}", style="success")],
-                    [InlineKeyboardButton("📤 انصراف", callback_data=f"xo_leave:{game_id}", style="danger")]
+                    [InlineKeyboardButton("🔥 شروع بازی", callback_data=f"xo_start:{game_id}", style="success")],
+                    [InlineKeyboardButton("❌ انصراف", callback_data=f"xo_leave:{game_id}", style="danger")]
                 ])
             else:
                 txt = (
@@ -673,8 +673,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📥 شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("📤 انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
-                    [InlineKeyboardButton("😭 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                    [InlineKeyboardButton("🎮 شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("❌ انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
+                    [InlineKeyboardButton("🚫 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
                 ])
 
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -1399,13 +1399,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿ military⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠇⠠ screen⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢸⢽⣿⣷⣿⣻ memory⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
