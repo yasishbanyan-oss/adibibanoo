@@ -4,10 +4,10 @@ import logging
 import os
 import random
 import re
+import shutil
 import sys
-import asyncio
 import threading
-import time
+import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -33,10 +33,11 @@ from telegram.ext import (
 # ==========================================
 # CONFIGURATION & LOGGING
 # ==========================================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8618205537:AAFCjx1_PkdC43ezimZgp-z5PAx0JKEmJqI")
-OWNER_ID = int(os.environ.get("OWNER_ID", 6749949992))
+BOT_TOKEN = "8618205537:AAFCjx1_PkdC43ezimZgp-z5PAx0JKEmJqI"
+OWNER_ID = 6749949992
 DB_FILE = "db.json"
 TEMP_DB_FILE = "db.json.tmp"
+BROKEN_DB_FILE = "db.json.broken"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -61,156 +62,6 @@ def run_health_check_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     logger.info(f"Dummy HTTP server running on port {port}")
     server.serve_forever()
-
-# ==========================================
-# GLOBAL HTTP SESSION & PRICE CACHE SYSTEM
-# ==========================================
-GLOBAL_HTTP_SESSION: aiohttp.ClientSession | None = None
-PRICE_LOCK = asyncio.Lock()
-
-PRICE_CACHE = {
-    "usdt_irt": None,
-    "usd_irt": None,
-    "trx_usd": None,
-    "ton_usd": None,
-    "last_updated_timestamp": 0,
-    "last_updated_str": "",
-    "source_usdt": "نامشخص",
-    "source_crypto": "نامشخص"
-}
-PRICE_CACHE_TTL = 30  # ثانیه
-
-async def get_http_session() -> aiohttp.ClientSession:
-    global GLOBAL_HTTP_SESSION
-    if GLOBAL_HTTP_SESSION is None or GLOBAL_HTTP_SESSION.closed:
-        timeout = aiohttp.ClientTimeout(total=6)
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TelegramBot/2.0'}
-        GLOBAL_HTTP_SESSION = aiohttp.ClientSession(timeout=timeout, headers=headers)
-    return GLOBAL_HTTP_SESSION
-
-# --- API Fetchers ---
-async def fetch_nobitex_stats(session: aiohttp.ClientSession) -> float | None:
-    try:
-        url = "https://api.nobitex.ir/market/stats"
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                stats = data.get("stats", {})
-                usdt_data = stats.get("usdt-irt", {})
-                latest = usdt_data.get("latest")
-                if latest:
-                    val = float(latest)
-                    # تبدیل ریال به تومان در صورت لزوم
-                    return val / 10 if val > 200000 else val
-    except Exception as e:
-        logger.error(f"[PRICE API ERROR] source=Nobitex error={e}")
-    return None
-
-async def fetch_wallex_stats(session: aiohttp.ClientSession) -> float | None:
-    try:
-        url = "https://api.wallex.ir/v1/currencies/stats"
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                result = data.get("result", {})
-                usdt_data = result.get("USDTTOMAN", {})
-                price = usdt_data.get("price")
-                if price:
-                    return float(price)
-    except Exception as e:
-        logger.error(f"[PRICE API ERROR] source=Wallex error={e}")
-    return None
-
-async def fetch_coingecko_crypto(session: aiohttp.ClientSession) -> tuple[float | None, float | None]:
-    trx, ton = None, None
-    try:
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=tron,the-open-network&vs_currencies=usd"
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                if "tron" in data and "usd" in data["tron"]:
-                    trx = float(data["tron"]["usd"])
-                if "the-open-network" in data and "usd" in data["the-open-network"]:
-                    ton = float(data["the-open-network"]["usd"])
-    except Exception as e:
-        logger.error(f"[PRICE API ERROR] source=CoinGecko error={e}")
-    return trx, ton
-
-async def fetch_coincap_crypto(session: aiohttp.ClientSession) -> tuple[float | None, float | None]:
-    trx, ton = None, None
-    try:
-        url = "https://api.coincap.io/v2/assets?ids=tron,toncoin"
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                for asset in data.get("data", []):
-                    if asset.get("id") == "tron":
-                        trx = float(asset.get("priceUsd", 0))
-                    elif asset.get("id") == "toncoin":
-                        ton = float(asset.get("priceUsd", 0))
-    except Exception as e:
-        logger.error(f"[PRICE API ERROR] source=CoinCap error={e}")
-    return trx, ton
-
-async def get_live_prices_system() -> tuple[dict, str]:
-    """
-    سیستم دریافت و مدیریت هوشمند قیمت با Cache، Lock و Fallback
-    برمی‌گرداند: (دیکشنری قیمت‌ها، وضعیت: LIVE | CACHED | LAST_KNOWN | FAILED)
-    """
-    now_ts = time.time()
-    
-    # ۱. استفاده از کش اگر معتبر باشد
-    if (now_ts - PRICE_CACHE["last_updated_timestamp"]) < PRICE_CACHE_TTL and PRICE_CACHE["usdt_irt"] is not None:
-        return PRICE_CACHE, "CACHED"
-
-    # ۲. قفل همزمانی برای جلوگیری از اسپم درخواست‌ها
-    async with PRICE_LOCK:
-        # بررسی مجدد بعد از دریافت قفل
-        if (time.time() - PRICE_CACHE["last_updated_timestamp"]) < PRICE_CACHE_TTL and PRICE_CACHE["usdt_irt"] is not None:
-            return PRICE_CACHE, "CACHED"
-
-        session = await get_http_session()
-
-        # دریافت قیمت تتر/دلار
-        usdt_price = await fetch_nobitex_stats(session)
-        source_usdt = "نوبیتکس"
-        if not usdt_price:
-            usdt_price = await fetch_wallex_stats(session)
-            source_usdt = "والکس"
-
-        # دریافت قیمت ترون و تون
-        trx_price, ton_price = await fetch_coingecko_crypto(session)
-        source_crypto = "CoinGecko"
-        if not trx_price or not ton_price:
-            trx_fallback, ton_fallback = await fetch_coincap_crypto(session)
-            trx_price = trx_price or trx_fallback
-            ton_price = ton_price or ton_fallback
-            source_crypto = "CoinCap"
-
-        # بروزرسانی کش در صورت موفقیت
-        now_date_str = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%H:%M:%S")
-        
-        if usdt_price or trx_price or ton_price:
-            if usdt_price:
-                PRICE_CACHE["usdt_irt"] = usdt_price
-                PRICE_CACHE["usd_irt"] = usdt_price  # مرجع اصلی بازار دیجیتال
-                PRICE_CACHE["source_usdt"] = source_usdt
-            if trx_price:
-                PRICE_CACHE["trx_usd"] = trx_price
-            if ton_price:
-                PRICE_CACHE["ton_usd"] = ton_price
-            
-            PRICE_CACHE["source_crypto"] = source_crypto
-            PRICE_CACHE["last_updated_timestamp"] = time.time()
-            PRICE_CACHE["last_updated_str"] = now_date_str
-            
-            return PRICE_CACHE, "LIVE"
-        
-        # اگر شبکه کاملاً قطعی داشت اما کش قبلی وجود دارد
-        if PRICE_CACHE["usdt_irt"] is not None:
-            return PRICE_CACHE, "LAST_KNOWN"
-        
-        return PRICE_CACHE, "FAILED"
 
 # ==========================================
 # ADVANCED REGEX PATTERNS & TEXT NORMALIZER
@@ -264,6 +115,73 @@ def get_persian_date_str():
     wd = weekdays[now.weekday()]
     time_str = now.strftime("%H:%M")
     return f"{wd} ، ساعت {time_str}"
+
+# ==========================================
+# SCRAPE LIVE PRICES DIRECTLY FROM TELEGRAM CHANNELS
+# ==========================================
+async def scrape_channel_text(channel_username: str) -> str:
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    url = f"https://t.me/s/{channel_username}"
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url, timeout=5) as resp:
+                if resp.status == 200:
+                    html_text = await resp.text()
+                    # استخراج آخرین پست‌های کانال
+                    messages = re.findall(r'<div class="tgme_widget_message_text js-message_text"[^>]*>(.*?)</div>', html_text, re.DOTALL)
+                    if messages:
+                        return messages[-1]
+    except Exception as e:
+        logger.error(f"Error scraping @{channel_username}: {e}")
+    return ""
+
+async def get_live_prices():
+    prices = {
+        "USD_IRT": 186000.0,
+        "TRX_USD": 0.3309,
+        "TON_USD": 1.324
+    }
+
+    # ۱. استخراج TON از کانال @tonprices
+    ton_html = await scrape_channel_text("tonprices")
+    if ton_html:
+        clean_text = re.sub(r'<[^>]+>', ' ', ton_html)
+        ton_match = re.search(r'([\d\.]+)\s*\$', clean_text)
+        if ton_match:
+            try:
+                prices["TON_USD"] = float(ton_match.group(1))
+            except ValueError:
+                pass
+
+    # ۲. استخراج TRX از کانال @trxPriceFa
+    trx_html = await scrape_channel_text("trxPriceFa")
+    if trx_html:
+        clean_text = re.sub(r'<[^>]+>', ' ', trx_html)
+        trx_match = re.search(r'([\d\.]+)\s*\$', clean_text)
+        if trx_match:
+            try:
+                prices["TRX_USD"] = float(trx_match.group(1))
+            except ValueError:
+                pass
+
+    # ۳. استخراج USDT/USD از کانال @tetherpriceFa
+    usdt_html = await scrape_channel_text("tetherpriceFa")
+    if usdt_html:
+        clean_text = re.sub(r'<[^>]+>', ' ', usdt_html)
+        clean_text = fa_to_en_digits(clean_text)
+        usdt_match = re.search(r'([\d,]+)\s*(?:تومان|ریال)?', clean_text)
+        if usdt_match:
+            try:
+                val_str = usdt_match.group(1).replace(',', '')
+                val_num = float(val_str)
+                # تبدیل ریال به تومان در صورت لزوم
+                prices["USD_IRT"] = val_num / 10 if val_num > 500000 else val_num
+            except ValueError:
+                pass
+
+    return prices
 
 # ==========================================
 # GLOBAL DB CACHE & DIRTY FLAG
@@ -572,7 +490,6 @@ def setup_chat_jobs(job_queue, active_chats: list):
 async def post_init(application: Application):
     db = load_db()
     setup_chat_jobs(application.job_queue, db.get("active_chats", []))
-    await get_http_session()
 
 # ==========================================
 # ADMIN PANEL RENDERING
@@ -1308,7 +1225,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         norm_text = normalize_text(raw_text)
 
         # --------------------------------------
-        # HANDLER PRICE / CRYPTO CALCULATOR (NEW REAL-TIME LOGIC)
+        # HANDLER PRICE / CRYPTO CALCULATOR
         # --------------------------------------
         match_crypto = CRYPTO_PATTERN.match(raw_text)
         if match_crypto:
@@ -1317,76 +1234,51 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             amount_val = float(fa_to_en_digits(amount_raw)) if amount_raw else 1.0
             
-            prices_data, price_status = await get_live_prices_system()
+            prices = await get_live_prices()
+            usd_irt = prices["USD_IRT"]
+            trx_usd = prices["TRX_USD"]
+            ton_usd = prices["TON_USD"]
 
-            if price_status == "FAILED" or prices_data["usdt_irt"] is None:
-                await update.message.reply_text(
-                    '<b>⚠️ منبع دریافت قیمت در حال حاضر در دسترس نیست. لطفاً چند لحظه بعد دوباره تلاش کنید.</b>',
-                    parse_mode=ParseMode.HTML
-                )
-                return
-
-            usd_irt = prices_data["usd_irt"]
-            trx_usd = prices_data["trx_usd"]
-            ton_usd = prices_data["ton_usd"]
-
-            status_labels = {
-                "LIVE": "🟢 زنده (لحظه‌ای)",
-                "CACHED": "📦 بروزرسانی شده (Cache)",
-                "LAST_KNOWN": "⚠️ آخرین قیمت معتبر"
-            }
-            status_text = status_labels.get(price_status, "نامشخص")
-            update_time = prices_data.get("last_updated_str", "")
-
-            amount_fmt = int(amount_val) if amount_val.is_integer() else amount_val
+            date_str = get_persian_date_str()
 
             if curr_raw in ["ترون"]:
-                if not trx_usd:
-                    await update.message.reply_text("❌ قیمت ترون در حال حاضر در دسترس نیست.")
-                    return
                 tot_usd = amount_val * trx_usd
                 tot_irt = tot_usd * usd_irt
                 usd_f = f"{tot_usd:,.4f}" if tot_usd < 10 else f"{tot_usd:,.2f}"
                 irt_f = f"{int(tot_irt):,}"
 
                 msg = (
-                    f'<b><tg-emoji emoji-id="6032713293049633080">🪙</tg-emoji> قیمت {amount_fmt} ترون در بازار :</b>\n\n'
-                    f'<b>‏┘─ <tg-emoji emoji-id="6030738741964840417">🪙</tg-emoji> دلار : {usd_f} </b>\n'
+                    f'<b><tg-emoji emoji-id="6032713293049633080">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} ترون در بازار آزاد :</b>\n\n'
+                    f'<b>‏┘─ <tg-emoji emoji-id="6030738741964840417">🪙</tg-emoji> دلار : {usd_f} </b>\n\n'
                     f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
-                    f'<b>📡 وضعیت: {status_text}</b>\n'
-                    f'<b>🕐 بروزرسانی: {update_time} (منبع: {prices_data["source_crypto"]})</b>'
+                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
                 return
 
             elif curr_raw in ["تون", "گرام"]:
-                if not ton_usd:
-                    await update.message.reply_text("❌ قیمت تون/گرام در حال حاضر در دسترس نیست.")
-                    return
                 tot_usd = amount_val * ton_usd
                 tot_irt = tot_usd * usd_irt
                 usd_f = f"{tot_usd:,.3f}" if tot_usd < 10 else f"{tot_usd:,.2f}"
                 irt_f = f"{int(tot_irt):,}"
 
                 msg = (
-                    f'<b><tg-emoji emoji-id="5873230707693723886">🪙</tg-emoji> قیمت {amount_fmt} تون / گرام در بازار :</b>\n\n'
-                    f'<b>‏┘─ <tg-emoji emoji-id="6030738741964840417">🪙</tg-emoji> دلار : {usd_f} </b>\n'
+                    f'<b><tg-emoji emoji-id="5873230707693723886">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} تون / گرام در بازار آزاد :</b>\n\n'
+                    f'<b>‏┘─ <tg-emoji emoji-id="6030738741964840417">🪙</tg-emoji> دلار : {usd_f} </b>\n\n'
                     f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
-                    f'<b>📡 وضعیت: {status_text}</b>\n'
-                    f'<b>🕐 بروزرسانی: {update_time} (منبع: {prices_data["source_crypto"]})</b>'
+                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
                 return
 
             elif curr_raw in ["تتر"]:
-                tot_irt = amount_val * prices_data["usdt_irt"]
+                tot_irt = amount_val * usd_irt
                 irt_f = f"{int(tot_irt):,}"
 
                 msg = (
-                    f'<b><tg-emoji emoji-id="6030599829837586389">🪙</tg-emoji> قیمت {amount_fmt} تتر (USDT) :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="6030599829837586389">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} تتر به واحد پول ایران :</b>\n\n'
                     f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
-                    f'<b>📡 وضعیت: {status_text}</b>\n'
-                    f'<b>🕐 بروزرسانی: {update_time} (منبع: {prices_data["source_usdt"]})</b>'
+                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
                 return
@@ -1396,10 +1288,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 irt_f = f"{int(tot_irt):,}"
 
                 msg = (
-                    f'<b><tg-emoji emoji-id="6030599829837586389">🪙</tg-emoji> قیمت {amount_fmt} دلار (نرخ بازار دیجیتال) :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="6030599829837586389">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} دلار به واحد پول ایران :</b>\n\n'
                     f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
-                    f'<b>📡 وضعیت: {status_text}</b>\n'
-                    f'<b>🕐 بروزرسانی: {update_time} (منبع: {prices_data["source_usdt"]})</b>'
+                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
                 return
@@ -1512,7 +1403,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         features = db.get("features", {})
 
         # --------------------------------------
-        # HELP / راهنما PANEL
+        # HELP / راهنما PANEL با ایموجی پریمیوم
         # --------------------------------------
         help_triggers = [
             "راهنما", "/help", "گودی راهنما", "گودی معرفی کن", 
@@ -1538,7 +1429,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # REPORT SYSTEM
+        # REPORT SYSTEM / سیستم گزارش با ایموجی پریمیوم
         # --------------------------------------
         if clean_raw in ["گزارش", "report"] and update.message.reply_to_message:
             rep_id = f"{chat_id}_{update.message.message_id}"
@@ -1568,24 +1459,24 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # DODOL / FUN RESPONSE
+        # DODOL / FUN RESPONSE با اصلاح ASCII ART
         # --------------------------------------
         if DODOL_PATTERN.search(raw_text):
             ascii_penis = (
-                "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉ military⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⠄⢔⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⡀⡣ screen⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
@@ -1600,7 +1491,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # BOT NAME RESPONSES
+        # BOT NAME RESPONSES با ایموجی پریمیوم
         # --------------------------------------
         is_reply_to_bot = (
             update.message.reply_to_message and 
@@ -1608,6 +1499,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.reply_to_message.from_user.id == context.bot.id
         )
 
+        # دفاع خودکار گودی با ایموجی پریمیوم
         if is_reply_to_bot and (clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد ")):
             topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").replace("ش", "").replace("ه", "").strip()
             topic_clean = html.escape(topic)
@@ -1626,7 +1518,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # ACTION REGISTRATION SYSTEM
+        # ACTION REGISTRATION SYSTEM با ایموجی پریمیوم
         # --------------------------------------
         action_type = None
         if any(k in clean_raw for k in ["ثبت گوه خوری", "ثبت گوهخوری"]): action_type = "goh_khori"
@@ -1720,7 +1612,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         # --------------------------------------
-        # STATS & OVERALL USER STATUS
+        # STATS & OVERALL USER STATUS با ایموجی پریمیوم
         # --------------------------------------
         is_asking_own_stats = clean_raw in ["آمارم", "آمار من", "وضعیت من"]
         is_asking_other_stats = clean_raw in ["اوضاع این", "اوضاعش", "آمار این", "وضعیت این", "وضعیت"] and update.message.reply_to_message
@@ -1753,7 +1645,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # GENERAL PERCENTAGE SYSTEM
+        # GENERAL PERCENTAGE SYSTEM با ایموجی پریمیوم
         # --------------------------------------
         if clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد "):
             target_u = update.message.reply_to_message.from_user if update.message.reply_to_message else update.effective_user
@@ -1773,7 +1665,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # INDIVIDUAL COUNTRY WORLD TIME
+        # INDIVIDUAL COUNTRY WORLD TIME با آیدی پریمیوم پرچم‌ها
         # --------------------------------------
         country_zones = {
             "ایران": ("Asia/Tehran", "5271878966347601947", "🇮🇷"),
@@ -1803,7 +1695,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f'<b><tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji> ساعت {c_name}: <code>{c_time}</code></b>', parse_mode=ParseMode.HTML)
                 return
 
-        # ۱. ساعت جهانی کامل
+        # ۱. ساعت جهانی کامل با دستورات «ساعت» و «ساعت جهانی»
         if norm_text in ["ساعت جهانی", "ساعت"] and features.get("world_time", True):
             now_tehran = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%H:%M:%S")
             now_ny = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
@@ -1839,7 +1731,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۲. خوشتیپ / خوژتیپ
+        # ۲. خوشتیپ / خوژتیپ با ایموجی پریمیوم
         elif norm_text in ["خوشتیپ کیه", "خوشتیپ کی", "خوژتیپ کیه", "خوژتیپ کی", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
             word_label = "خوژتیپ" if "خوژ" in norm_text else "خوشتیپ"
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "handsome")
@@ -1867,7 +1759,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۳. جنده
+        # ۳. جنده با ایموجی پریمیوم
         elif norm_text in ["جنده کیه", "جنده کی", "جنده"] and features.get("jende", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jende")
             if is_cd:
@@ -1893,7 +1785,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۴. کونی
+        # ۴. کونی با ایموجی پریمیوم
         elif norm_text in ["کونی کیه", "کونی کی", "کونی"] and features.get("koni", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koni")
             if is_cd:
@@ -1919,7 +1811,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۵. جقی
+        # ۵. جقی با ایموجی پریمیوم
         elif norm_text in ["جقی", "جقی کیه", "جقی گروه"] and features.get("jaghi", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jaghi")
             if is_cd:
@@ -1947,7 +1839,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۶. کصخل / کسخل
+        # ۶. کصخل / کسخل با ایموجی پریمیوم
         elif norm_text in ["کصخل", "کسخل", "کصخل گروه", "کسخل گروه"] and features.get("koskhal", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koskhal")
             if is_cd:
@@ -1974,7 +1866,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۷. سکسی
+        # ۷. سکسی با ایموجی پریمیوم
         elif norm_text in ["سکسی", "سکسی گروه"] and features.get("sexy", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "sexy")
             if is_cd:
@@ -2000,7 +1892,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۸. جذاب
+        # ۸. جذاب با ایموجی پریمیوم
         elif norm_text in ["جذاب", "جذاب گروه"] and features.get("jazab", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jazab")
             if is_cd:
@@ -2028,7 +1920,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۹. شیپ / کاپل
+        # ۹. شیپ / کاپل با ایموجی پریمیوم
         elif norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
             if is_cd:
@@ -2093,7 +1985,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     await update.message.reply_text("❌ اعضای کافی موجود نیست!")
 
-        # ۱۰. پیشنهاد غذا
+        # ۱۰. پیشنهاد غذا با ایموجی پریمیوم
         elif ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
             fl = db.get("foods", [])
             if fl:
@@ -2104,7 +1996,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۱۱. شعرخوانی
+        # ۱۱. سیستم شعرخوانی همراه با ایموجی پریمیوم قلم ✍️
         elif norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
             custom_names = db.get("custom_names", [])
             if custom_names:
@@ -2140,12 +2032,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==========================================
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Error: {context.error}", exc_info=context.error)
-
-async def on_shutdown(application: Application):
-    global GLOBAL_HTTP_SESSION
-    if GLOBAL_HTTP_SESSION and not GLOBAL_HTTP_SESSION.closed:
-        await GLOBAL_HTTP_SESSION.close()
-        logger.info("Global HTTP Session closed gracefully.")
 
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
