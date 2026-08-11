@@ -421,20 +421,24 @@ async def post_init(application: Application):
 # ==========================================
 # ADMIN PANEL RENDERING
 # ==========================================
-async def render_main_panel_message(query, is_owner: bool = False):
+async def render_owner_panel_message(query):
     buttons = [
         [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef", style="primary")],
+        [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
+        [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
+        [InlineKeyboardButton("📢 پیام همگانی", callback_data="panel_broadcast", style="primary")]
+    ]
+    keyboard = InlineKeyboardMarkup(buttons)
+    await query.message.edit_text("<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+async def render_group_admin_panel_message(query):
+    buttons = [
         [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods", style="primary")],
         [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names", style="primary")],
-        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")],
-        [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
-        [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")]
+        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")]
     ]
-    if is_owner:
-        buttons.append([InlineKeyboardButton("📢 پیام همگانی", callback_data="panel_broadcast", style="primary")])
-        
     keyboard = InlineKeyboardMarkup(buttons)
-    await query.message.edit_text("مدیر عزیز\n\nچه چیزی را تغییر می‌دهید؟", reply_markup=keyboard)
+    await query.message.edit_text("<b>مدیر محترم گروه 🔰\n\nجهت تنظیمات اختصاصی گروه گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 async def render_features_panel_message(query, db: dict):
     feats = db.get("features", {})
@@ -455,7 +459,7 @@ async def render_features_panel_message(query, db: dict):
         [InlineKeyboardButton(f"{status('lef')} 🖼 لف", callback_data="toggle_lef", style="primary")],
         [InlineKeyboardButton(f"{status('goh_khor')} 🏆 گوه خور", callback_data="toggle_goh_khor", style="primary")],
         [InlineKeyboardButton(f"{status('koni_percent')} 📊 درصد", callback_data="toggle_koni_percent", style="primary")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_main", style="primary")]
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
     ])
     await query.message.edit_text("⚙ <b>مدیریت قابلیت‌ها</b>\n\nبا کلیک روی هر دکمه، وضعیت آن را روشن یا خاموش کنید:", reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
@@ -473,16 +477,23 @@ def check_xo_winner(board):
         return "draw"
     return None
 
-def build_xo_keyboard(game_id: str, board: list) -> InlineKeyboardMarkup:
+def build_xo_keyboard(game_id: str, board: list, is_finished: bool = False) -> InlineKeyboardMarkup:
     buttons = []
-    symbols = {None: "⬜️", "X": "❌", "O": "⭕️"}
+    empty_emoji = '<tg-emoji emoji-id="5911319564301376749">🤖</tg-emoji>'
+    o_emoji = '<tg-emoji emoji-id="5857031396723269245">⭕️</tg-emoji>'
+    x_emoji = '<tg-emoji emoji-id="5857415006022278161">❌</tg-emoji>'
+    
+    symbols = {None: empty_emoji, "X": x_emoji, "O": o_emoji}
     for i in range(0, 9, 3):
         row = []
         for j in range(i, i + 3):
-            val = symbols.get(board[j], "⬜️")
+            val = symbols.get(board[j], empty_emoji)
             row.append(InlineKeyboardButton(val, callback_data=f"xo_move:{game_id}:{j}"))
         buttons.append(row)
-    buttons.append([InlineKeyboardButton("🏴 تسلیم", callback_data=f"xo_surrender:{game_id}", style="danger")])
+    
+    if not is_finished:
+        surrender_emoji = '<tg-emoji emoji-id="5839270298294298902">⚰️</tg-emoji>'
+        buttons.append([InlineKeyboardButton(f"{surrender_emoji} تسلیم", callback_data=f"xo_surrender:{game_id}", style="danger")])
     return InlineKeyboardMarkup(buttons)
 
 # ==========================================
@@ -517,9 +528,11 @@ async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
             '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
         )
+        join_btn = '<tg-emoji emoji-id="5889002570633977838">📥</tg-emoji> شرکت'
+        cancel_btn = '<tg-emoji emoji-id="5848202125078699135">😭</tg-emoji> بیخیال'
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success")],
-            [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+            [InlineKeyboardButton(join_btn, callback_data=f"xo_join:{game_id}", style="success")],
+            [InlineKeyboardButton(cancel_btn, callback_data=f"xo_cancel:{game_id}", style="danger")]
         ])
         
         await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -597,6 +610,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
             m1_txt = get_user_mention(game["p1_id"], game["p1_name"]) if game.get("p1_id") else ""
 
+            join_btn = '<tg-emoji emoji-id="5889002570633977838">📥</tg-emoji> شرکت'
+            leave_btn = '<tg-emoji emoji-id="5888594273862950655">📤</tg-emoji> انصراف'
+            cancel_btn = '<tg-emoji emoji-id="5848202125078699135">😭</tg-emoji> بیخیال'
+
             if m1_txt:
                 txt = (
                     '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
@@ -606,8 +623,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
-                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                    [InlineKeyboardButton(join_btn, callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton(leave_btn, callback_data=f"xo_leave:{game_id}", style="danger")],
+                    [InlineKeyboardButton(cancel_btn, callback_data=f"xo_cancel:{game_id}", style="danger")]
                 ])
             else:
                 txt = (
@@ -616,8 +633,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success")],
-                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                    [InlineKeyboardButton(join_btn, callback_data=f"xo_join:{game_id}", style="success")],
+                    [InlineKeyboardButton(cancel_btn, callback_data=f"xo_cancel:{game_id}", style="danger")]
                 ])
 
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -643,6 +660,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             m1 = get_user_mention(game["p1_id"], game["p1_name"]) if game.get("p1_id") else ""
             m2 = get_user_mention(game["p2_id"], game["p2_name"]) if game.get("p2_id") else ""
 
+            join_btn = '<tg-emoji emoji-id="5889002570633977838">📥</tg-emoji> شرکت'
+            leave_btn = '<tg-emoji emoji-id="5888594273862950655">📤</tg-emoji> انصراف'
+            cancel_btn = '<tg-emoji emoji-id="5848202125078699135">😭</tg-emoji> بیخیال'
+            start_btn = '<tg-emoji emoji-id="5832397371278892338">🏰</tg-emoji> شروع بازی'
+
             if game.get("p1_id") and game.get("p2_id"):
                 txt = (
                     '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
@@ -651,8 +673,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b><tg-emoji emoji-id="5474531397571986677">🚬</tg-emoji> اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شروع بازی 🎮", callback_data=f"xo_start:{game_id}", style="success")],
-                    [InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger")]
+                    [InlineKeyboardButton(start_btn, callback_data=f"xo_start:{game_id}", style="success")],
+                    [InlineKeyboardButton(leave_btn, callback_data=f"xo_leave:{game_id}", style="danger")]
                 ])
             else:
                 txt = (
@@ -663,8 +685,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
-                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                    [InlineKeyboardButton(join_btn, callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton(leave_btn, callback_data=f"xo_leave:{game_id}", style="danger")],
+                    [InlineKeyboardButton(cancel_btn, callback_data=f"xo_cancel:{game_id}", style="danger")]
                 ])
 
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -681,7 +703,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             mark_db_dirty()
             save_db()
 
-            txt = '<b>بازی شروع شد! ببینیم برنده میدان کیه! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>'
+            turn_mention = get_user_mention(game['p1_id'], game['p1_name'])
+            o_emoji = '<tg-emoji emoji-id="5857031396723269245">⭕️</tg-emoji>'
+            txt = (
+                '<b>بازی شروع شد! ببینیم برنده میدان کیه! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>\n\n'
+                f'<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> نوبت بازی: {turn_mention} ({o_emoji})</b>'
+            )
             kb = build_xo_keyboard(game_id, game["board"])
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             return
@@ -737,7 +764,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 mark_db_dirty()
                 save_db()
 
-                kb = build_xo_keyboard(game_id, game["board"])
+                kb = build_xo_keyboard(game_id, game["board"], is_finished=True)
 
                 if winner_symbol == "draw":
                     res_txt = (
@@ -760,14 +787,26 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 return
 
             else:
-                game["turn"] = game["p2_id"] if user_id == game["p1_id"] else game["p1_id"]
+                next_turn_id = game["p2_id"] if user_id == game["p1_id"] else game["p1_id"]
+                next_turn_name = game["p2_name"] if user_id == game["p1_id"] else game["p1_name"]
+                next_symbol = "X" if symbol == "O" else "O"
+                
+                game["turn"] = next_turn_id
                 db["xo_games"][game_id] = game
                 mark_db_dirty()
                 save_db()
 
+                turn_mention = get_user_mention(next_turn_id, next_turn_name)
+                symbol_emoji = '<tg-emoji emoji-id="5857415006022278161">❌</tg-emoji>' if next_symbol == "X" else '<tg-emoji emoji-id="5857031396723269245">⭕️</tg-emoji>'
+                
+                txt = (
+                    '<b>بازی در جریان است... <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>\n\n'
+                    f'<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> نوبت بازی: {turn_mention} ({symbol_emoji})</b>'
+                )
+
                 kb = build_xo_keyboard(game_id, game["board"])
                 try:
-                    await query.message.edit_reply_markup(reply_markup=kb)
+                    await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
                 except Exception:
                     pass
                 return
@@ -852,9 +891,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"{signers_list}"
         )
 
+        sign_btn_text = f'<tg-emoji emoji-id="5859527571586161695">✍️</tg-emoji> امضای شاهدان ({len(rec["signers"])})'
+        stat_btn_text = f'<tg-emoji emoji-id="5888937012253171131">🧾</tg-emoji> آمار کل {rec["action_title"]} این کاربر'
+
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"✍️ امضای شاهدان ({len(rec['signers'])})", callback_data=f"sign_action:{rec_id}", style="success")],
-            [InlineKeyboardButton(f"📊 آمار کل {rec['action_title']} این کاربر", callback_data=f"stat_action:{rec_id}", style="primary")]
+            [InlineKeyboardButton(sign_btn_text, callback_data=f"sign_action:{rec_id}", style="success")],
+            [InlineKeyboardButton(stat_btn_text, callback_data=f"stat_action:{rec_id}", style="primary")]
         ])
 
         try:
@@ -935,10 +977,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان: {disagrees_text}</b>'
         )
 
+        agree_emoji = '<tg-emoji emoji-id="5411228694935012881">👍</tg-emoji>'
+        disagree_emoji = '<tg-emoji emoji-id="5411484842489578182">👎</tg-emoji>'
+
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("🟢 موافقم", callback_data="couple_agree", style="success"),
-                InlineKeyboardButton("🔴 افتضاح", callback_data="couple_disagree", style="danger")
+                InlineKeyboardButton(f"{agree_emoji} موافقم", callback_data="couple_agree", style="success"),
+                InlineKeyboardButton(f"{disagree_emoji} افتضاح", callback_data="couple_disagree", style="danger")
             ]
         ])
 
@@ -950,7 +995,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == "panel_broadcast":
         if user_id != OWNER_ID:
-            await query.answer("این بخش برای مالک کل ربات می‌باشد.", show_alert=True)
+            await query.answer("این بخش فقط برای مالک اصلی ربات می‌باشد.", show_alert=True)
             return
         
         active_chats = db.get("active_chats", [])
@@ -966,13 +1011,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 buttons.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"bcast_chat:{cid}", style="primary")])
             except Exception:
                 pass
-        buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="panel_main", style="primary")])
+        buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")])
         await query.message.edit_text("📢 <b>انتخاب گروه جهت ارسال پیام همگانی:</b>", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         return
 
     elif data.startswith("bcast_chat:"):
         if user_id != OWNER_ID:
-            await query.answer("این بخش برای مالک کل ربات می‌باشد.", show_alert=True)
+            await query.answer("این بخش فقط برای مالک اصلی ربات می‌باشد.", show_alert=True)
             return
         target_cid = data.replace("bcast_chat:", "")
         db["states"]["waiting_broadcast_msg"][user_id] = int(target_cid)
@@ -985,45 +1030,68 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         return
 
-    if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
-        await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+    if data == "panel_owner_main":
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        await render_owner_panel_message(query)
         return
 
-    if data == "panel_main":
-        await render_main_panel_message(query, is_owner=(user_id == OWNER_ID))
-    elif data == "panel_media_lef":
+    if data == "panel_admin_main":
+        await render_group_admin_panel_message(query)
+        return
+
+    if data == "panel_media_lef":
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
         if user_id not in db["states"]["waiting_lef_media"]:
             db["states"]["waiting_lef_media"].append(user_id)
             mark_db_dirty()
             save_db()
         await query.message.edit_text("🖼 لطفاً رسانه مورد نظر را ارسال کنید.\n\nبرای لغو /cancel را بزنید.")
     elif data == "panel_foods":
+        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ افزودن غذا", callback_data="food_add", style="success")],
             [InlineKeyboardButton("➖ حذف غذا", callback_data="food_del", style="danger")],
             [InlineKeyboardButton("📋 لیست غذاها", callback_data="food_page_1", style="primary")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_main", style="primary")]
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_admin_main", style="primary")]
         ])
         await query.message.edit_text("🍽 <b>مدیریت غذاها</b>\n\nگزینه مورد نظر را انتخاب کنید:", reply_markup=keyboard, parse_mode=ParseMode.HTML)
     elif data == "food_add":
+        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
         if user_id not in db["states"]["waiting_add_food"]:
             db["states"]["waiting_add_food"].append(user_id)
             mark_db_dirty()
             save_db()
         await query.message.edit_text("➕ نام غذایی که می‌خواهید اضافه شود را بنویسید:\n\nبرای لغو /cancel را بزنید.")
     elif data == "food_del":
+        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
         if user_id not in db["states"]["waiting_del_food"]:
             db["states"]["waiting_del_food"].append(user_id)
             mark_db_dirty()
             save_db()
         await query.message.edit_text("➖ نام دقیق غذایی که می‌خواهید حذف شود را بنویسید:\n\nبرای لغو /cancel را بزنید.")
     elif data == "panel_cooldown":
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
         if user_id not in db["states"]["waiting_cooldown"]:
             db["states"]["waiting_cooldown"].append(user_id)
             mark_db_dirty()
             save_db()
         await query.message.edit_text(f"⏱ زمان فعلی محدودیت (Cooldown): <b>{db.get('cooldown_minutes', 10)} دقیقه</b>\n\nلطفاً زمان جدید را به دقیقه (عدد انگلیسی) وارد کنید:\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
     elif data == "panel_poem_names":
+        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
         if user_id not in db["states"]["waiting_poem_names"]:
             db["states"]["waiting_poem_names"].append(user_id)
             mark_db_dirty()
@@ -1031,14 +1099,23 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         current_names = ", ".join(db.get("custom_names", [])) or "هیچ اسمی ثبت نشده"
         await query.message.edit_text(f"📜 <b>اسامی فعلی برای شعرها:</b>\n{current_names}\n\nلطفاً اسامی جدید را یکی‌یکی بفرستید. وقتی تمام شد دستور <code>/done</code> را ارسال کنید.\nبرای لغو دستور /cancel را بزنید.", parse_mode=ParseMode.HTML)
     elif data == "panel_add_poem":
+        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
         if user_id not in db["states"]["waiting_add_poem"]:
             db["states"]["waiting_add_poem"].append(user_id)
             mark_db_dirty()
             save_db()
         await query.message.edit_text("➕ لطفاً شعر جدید را بفرستید. می‌تونید از کلمه <code>یوزرنیم</code> یا <code>{name}</code> برای جای‌گذاری اسم استفاده کنید:\nمثال: <code>یوزرنیم خواست منو خراب کنه بردن خرابه کردنش</code>\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
     elif data == "panel_features":
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
         await render_features_panel_message(query, db)
     elif data.startswith("toggle_"):
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
         fk = data.replace("toggle_", "")
         if fk in db["features"]:
             db["features"][fk] = not db["features"][fk]
@@ -1058,16 +1135,39 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_info = await context.bot.get_me()
     
     if chat_type == "private":
-        start_pv_msg = "سلام عزیزم! به ربات جذاب من خوش اومدی! با استفاده از دکمه شیشه‌ای زیر منو به گروهت اضافه کن!"
+        start_pv_msg = (
+            '<b>سلام عزیزم! به ربات جذاب من خوش اومدی! <tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji></b>\n'
+            '<b>با استفاده از دکمه شیشه‌ای زیر منو به گروهت اضافه کن! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+            '<b>بعد از اضافه کردن با ارسال دستور راهنما میتونی با من آشنا بشی! <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>'
+        )
+        add_btn_text = '<tg-emoji emoji-id="4956745198521549627">🌟</tg-emoji> اضافه کردن گودی به گروه'
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ اضافه کردن گودی به گروه", url=f"https://t.me/{bot_info.username}?startgroup=true", style="success")]
+            [InlineKeyboardButton(add_btn_text, url=f"https://t.me/{bot_info.username}?startgroup=true", style="success")]
         ])
-        await update.message.reply_text(start_pv_msg, reply_markup=kb)
+        await update.message.reply_text(start_pv_msg, reply_markup=kb, parse_mode=ParseMode.HTML)
     else:
         start_group_msg = '<b>بله عزیزم؟ من تو گروهم آماده و حاضر! <tg-emoji emoji-id="5283268017025736027">🤨</tg-emoji></b>'
         await update.message.reply_text(start_group_msg, parse_mode=ParseMode.HTML)
 
-async def command_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!")
+        return
+
+    buttons = [
+        [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef", style="primary")],
+        [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
+        [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
+        [InlineKeyboardButton("📢 پیام همگانی", callback_data="panel_broadcast", style="primary")]
+    ]
+    keyboard = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text("<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
     user_id = update.effective_user.id
@@ -1078,18 +1178,12 @@ async def command_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     buttons = [
-        [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef", style="primary")],
         [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods", style="primary")],
         [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names", style="primary")],
-        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")],
-        [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
-        [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")]
+        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")]
     ]
-    if user_id == OWNER_ID:
-        buttons.append([InlineKeyboardButton("📢 پیام همگانی", callback_data="panel_broadcast", style="primary")])
-
     keyboard = InlineKeyboardMarkup(buttons)
-    await update.message.reply_text("مدیر عزیز\n\nچه چیزی را تغییر می‌دهید؟", reply_markup=keyboard)
+    await update.message.reply_text("<b>مدیر محترم گروه 🔰\n\nجهت تنظیمات اختصاصی گروه گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 async def command_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1155,14 +1249,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # TEXT COMMAND 'پنل'
         # --------------------------------------
         if clean_raw == "پنل" and await is_admin_or_owner(context, chat_id, user_id):
-            await command_panel(update, context)
+            await command_admin_panel(update, context)
             return
 
         # --------------------------------------
         # ADMIN WAITING STATES
         # --------------------------------------
         if await is_admin_or_owner(context, chat_id, user_id):
-            if user_id in db["states"].get("waiting_broadcast_msg", {}):
+            if user_id in db["states"].get("waiting_broadcast_msg", {}) and user_id == OWNER_ID:
                 target_cid = db["states"]["waiting_broadcast_msg"][user_id]
                 del db["states"]["waiting_broadcast_msg"][user_id]
                 mark_db_dirty()
@@ -1182,7 +1276,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f"❌ خطا در ارسال پیام همگانی: {e}")
                 return
 
-            if user_id in db["states"].get("waiting_lef_media", []):
+            if user_id in db["states"].get("waiting_lef_media", []) and user_id == OWNER_ID:
                 media = None
                 if update.message.sticker: media = {"type": "sticker", "file_id": update.message.sticker.file_id}
                 elif update.message.photo: media = {"type": "photo", "file_id": update.message.photo[-1].file_id}
@@ -1224,7 +1318,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_db(force=True)
                     return
 
-            if user_id in db["states"].get("waiting_cooldown", []):
+            if user_id in db["states"].get("waiting_cooldown", []) and user_id == OWNER_ID:
                 if raw_text and raw_text.isdigit():
                     val = int(raw_text)
                     if val > 0:
@@ -1271,14 +1365,19 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه میمون کوچولو هست آشنا بشی! <tg-emoji emoji-id="5413391520206169048">🐻</tg-emoji></b>\n'
                 '<b>- برخی از دستورات بدون ادمین بودن کار می‌کنند ولی برخی دیگر نیازمند دسترسی مدیریت هستند.</b>'
             )
+            fun_btn = '<tg-emoji emoji-id="5415940089375106928">😁</tg-emoji> راهنمای سرگرمی'
+            rude_btn = '<tg-emoji emoji-id="5832633418386513259">😋</tg-emoji> راهنمای بی ادبی'
+            useful_btn = '<tg-emoji emoji-id="5830338333892418460">📦</tg-emoji> راهنمای کاربردی'
+            admin_btn = '<tg-emoji emoji-id="5803348359972393936">⚙️</tg-emoji> راهنمای مدیریت ربات'
+
             kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun", style="primary"),
-                    InlineKeyboardButton("راهنمای بی ادبی", callback_data="help_rude", style="primary")
+                    InlineKeyboardButton(fun_btn, callback_data="help_fun", style="primary"),
+                    InlineKeyboardButton(rude_btn, callback_data="help_rude", style="primary")
                 ],
                 [
-                    InlineKeyboardButton("راهنمای کاربردی", callback_data="help_useful", style="primary"),
-                    InlineKeyboardButton("راهنمای مدیریت ربات", callback_data="help_admin", style="primary")
+                    InlineKeyboardButton(useful_btn, callback_data="help_useful", style="primary"),
+                    InlineKeyboardButton(admin_btn, callback_data="help_admin", style="primary")
                 ]
             ])
             await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -1304,11 +1403,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
+            resolve_btn = '<tg-emoji emoji-id="5206607081334906820">✔️</tg-emoji> بررسی شد'
+            cancel_btn = '<tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> حذف'
+
             txt = f'<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> گزارش شما برای مدیران گروه ارسال شد!</b>{admin_mentions}'
             kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("✔️ بررسی شد", callback_data=f"report_resolve:{rep_id}", style="success"),
-                    InlineKeyboardButton("❌ حذف", callback_data=f"report_cancel:{rep_id}", style="danger")
+                    InlineKeyboardButton(resolve_btn, callback_data=f"report_resolve:{rep_id}", style="success"),
+                    InlineKeyboardButton(cancel_btn, callback_data=f"report_cancel:{rep_id}", style="danger")
                 ]
             ])
             await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -1320,8 +1422,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if DODOL_PATTERN.search(raw_text):
             ascii_penis = (
                 "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗ military⣿⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⣿ memory⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
@@ -1459,9 +1561,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"<b>{cfg['funny_text']} <tg-emoji emoji-id=\"{cfg['icon_id']}\">🔥</tg-emoji></b>"
                 )
 
+                sign_btn_text = '<tg-emoji emoji-id="5859527571586161695">✍️</tg-emoji> امضای شاهدان (۰)'
+                stat_btn_text = f'<tg-emoji emoji-id="5888937012253171131">🧾</tg-emoji> آمار کل {cfg["title"]} این کاربر'
+
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✍️ امضای شاهدان (۰)", callback_data=f"sign_action:{rec_id}", style="success")],
-                    [InlineKeyboardButton(f"📊 آمار کل {cfg['title']} این کاربر", callback_data=f"stat_action:{rec_id}", style="primary")]
+                    [InlineKeyboardButton(sign_btn_text, callback_data=f"sign_action:{rec_id}", style="success")],
+                    [InlineKeyboardButton(stat_btn_text, callback_data=f"stat_action:{rec_id}", style="primary")]
                 ])
 
                 await update.message.reply_text(init_msg, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -1813,10 +1918,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     name1 = get_user_mention(u1_dict["id"], u1_dict["name"])
                     name2 = get_user_mention(u2_dict["id"], u2_dict["name"])
 
+                    agree_emoji = '<tg-emoji emoji-id="5411228694935012881">👍</tg-emoji>'
+                    disagree_emoji = '<tg-emoji emoji-id="5411484842489578182">👎</tg-emoji>'
+
                     kb = InlineKeyboardMarkup([
                         [
-                            InlineKeyboardButton("🟢 موافقم", callback_data="couple_agree", style="success"),
-                            InlineKeyboardButton("🔴 افتضاح", callback_data="couple_disagree", style="danger")
+                            InlineKeyboardButton(f"{agree_emoji} موافقم", callback_data="couple_agree", style="success"),
+                            InlineKeyboardButton(f"{disagree_emoji} افتضاح", callback_data="couple_disagree", style="danger")
                         ]
                     ])
 
@@ -1902,7 +2010,7 @@ def main():
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", command_start))
-    app.add_handler(CommandHandler("panel", command_panel))
+    app.add_handler(CommandHandler("panel", command_owner_panel))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
