@@ -11,7 +11,6 @@ import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import aiohttp
 
 from telegram import (
     Update,
@@ -76,11 +75,6 @@ DODOL_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-CRYPTO_PATTERN = re.compile(
-    r"^\s*(?P<amount>[\d\.\u0660-\u0669\u06f0-\u06f9]+)?\s*(?P<currency>ترون|تون|گرام|تتر|دلار)\s*$",
-    re.IGNORECASE
-)
-
 PERSIAN_PERMUTATIONS = {
     '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
     '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
@@ -115,73 +109,6 @@ def get_persian_date_str():
     wd = weekdays[now.weekday()]
     time_str = now.strftime("%H:%M")
     return f"{wd} ، ساعت {time_str}"
-
-# ==========================================
-# SCRAPE LIVE PRICES DIRECTLY FROM TELEGRAM CHANNELS
-# ==========================================
-async def scrape_channel_text(channel_username: str) -> str:
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    url = f"https://t.me/s/{channel_username}"
-    try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url, timeout=5) as resp:
-                if resp.status == 200:
-                    html_text = await resp.text()
-                    # استخراج آخرین پست‌های کانال
-                    messages = re.findall(r'<div class="tgme_widget_message_text js-message_text"[^>]*>(.*?)</div>', html_text, re.DOTALL)
-                    if messages:
-                        return messages[-1]
-    except Exception as e:
-        logger.error(f"Error scraping @{channel_username}: {e}")
-    return ""
-
-async def get_live_prices():
-    prices = {
-        "USD_IRT": 186000.0,
-        "TRX_USD": 0.3309,
-        "TON_USD": 1.324
-    }
-
-    # ۱. استخراج TON از کانال @tonprices
-    ton_html = await scrape_channel_text("tonprices")
-    if ton_html:
-        clean_text = re.sub(r'<[^>]+>', ' ', ton_html)
-        ton_match = re.search(r'([\d\.]+)\s*\$', clean_text)
-        if ton_match:
-            try:
-                prices["TON_USD"] = float(ton_match.group(1))
-            except ValueError:
-                pass
-
-    # ۲. استخراج TRX از کانال @trxPriceFa
-    trx_html = await scrape_channel_text("trxPriceFa")
-    if trx_html:
-        clean_text = re.sub(r'<[^>]+>', ' ', trx_html)
-        trx_match = re.search(r'([\d\.]+)\s*\$', clean_text)
-        if trx_match:
-            try:
-                prices["TRX_USD"] = float(trx_match.group(1))
-            except ValueError:
-                pass
-
-    # ۳. استخراج USDT/USD از کانال @tetherpriceFa
-    usdt_html = await scrape_channel_text("tetherpriceFa")
-    if usdt_html:
-        clean_text = re.sub(r'<[^>]+>', ' ', usdt_html)
-        clean_text = fa_to_en_digits(clean_text)
-        usdt_match = re.search(r'([\d,]+)\s*(?:تومان|ریال)?', clean_text)
-        if usdt_match:
-            try:
-                val_str = usdt_match.group(1).replace(',', '')
-                val_num = float(val_str)
-                # تبدیل ریال به تومان در صورت لزوم
-                prices["USD_IRT"] = val_num / 10 if val_num > 500000 else val_num
-            except ValueError:
-                pass
-
-    return prices
 
 # ==========================================
 # GLOBAL DB CACHE & DIRTY FLAG
@@ -1225,77 +1152,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         norm_text = normalize_text(raw_text)
 
         # --------------------------------------
-        # HANDLER PRICE / CRYPTO CALCULATOR
-        # --------------------------------------
-        match_crypto = CRYPTO_PATTERN.match(raw_text)
-        if match_crypto:
-            amount_raw = match_crypto.group("amount")
-            curr_raw = match_crypto.group("currency").strip().lower()
-
-            amount_val = float(fa_to_en_digits(amount_raw)) if amount_raw else 1.0
-            
-            prices = await get_live_prices()
-            usd_irt = prices["USD_IRT"]
-            trx_usd = prices["TRX_USD"]
-            ton_usd = prices["TON_USD"]
-
-            date_str = get_persian_date_str()
-
-            if curr_raw in ["ترون"]:
-                tot_usd = amount_val * trx_usd
-                tot_irt = tot_usd * usd_irt
-                usd_f = f"{tot_usd:,.4f}" if tot_usd < 10 else f"{tot_usd:,.2f}"
-                irt_f = f"{int(tot_irt):,}"
-
-                msg = (
-                    f'<b><tg-emoji emoji-id="6032713293049633080">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} ترون در بازار آزاد :</b>\n\n'
-                    f'<b>‏┘─ <tg-emoji emoji-id="6030738741964840417">🪙</tg-emoji> دلار : {usd_f} </b>\n\n'
-                    f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
-                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-                return
-
-            elif curr_raw in ["تون", "گرام"]:
-                tot_usd = amount_val * ton_usd
-                tot_irt = tot_usd * usd_irt
-                usd_f = f"{tot_usd:,.3f}" if tot_usd < 10 else f"{tot_usd:,.2f}"
-                irt_f = f"{int(tot_irt):,}"
-
-                msg = (
-                    f'<b><tg-emoji emoji-id="5873230707693723886">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} تون / گرام در بازار آزاد :</b>\n\n'
-                    f'<b>‏┘─ <tg-emoji emoji-id="6030738741964840417">🪙</tg-emoji> دلار : {usd_f} </b>\n\n'
-                    f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
-                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-                return
-
-            elif curr_raw in ["تتر"]:
-                tot_irt = amount_val * usd_irt
-                irt_f = f"{int(tot_irt):,}"
-
-                msg = (
-                    f'<b><tg-emoji emoji-id="6030599829837586389">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} تتر به واحد پول ایران :</b>\n\n'
-                    f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
-                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-                return
-
-            elif curr_raw in ["دلار"]:
-                tot_irt = amount_val * usd_irt
-                irt_f = f"{int(tot_irt):,}"
-
-                msg = (
-                    f'<b><tg-emoji emoji-id="6030599829837586389">🪙</tg-emoji> قیمت {int(amount_val) if amount_val.is_integer() else amount_val} دلار به واحد پول ایران :</b>\n\n'
-                    f'<b>‏┘─ <tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> تومان : {irt_f}</b>\n\n'
-                    f'<b><tg-emoji emoji-id="6007814255238192870">🗓</tg-emoji> تاریخ: {date_str}</b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-                return
-
-        # --------------------------------------
         # TEXT COMMAND 'پنل'
         # --------------------------------------
         if clean_raw == "پنل" and await is_admin_or_owner(context, chat_id, user_id):
@@ -1463,8 +1319,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --------------------------------------
         if DODOL_PATTERN.search(raw_text):
             ascii_penis = (
-                "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉ military⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗ military⣿⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
@@ -1476,7 +1332,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⡀⡣ screen⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
