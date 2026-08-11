@@ -117,7 +117,7 @@ def get_persian_date_str():
     return f"{wd} ، ساعت {time_str}"
 
 # ==========================================
-# FETCH REAL-TIME CRYPTO & CURRENCY PRICES
+# FETCH REAL-TIME CRYPTO & CURRENCY PRICES (MULTI-SOURCE GLOBAL API)
 # ==========================================
 async def get_live_prices():
     prices = {
@@ -125,42 +125,53 @@ async def get_live_prices():
         "TRX_USD": 0.3309,
         "TON_USD": 1.324
     }
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
     
-    # 1. دریافت قیمت دسیمل و لحظه‌ای تتر از نوبیتکس
+    # 1. قیمت تتر از سرویس صرافی‌های بدون محدودیت IP
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            url_nobitex = "https://api.nobitex.ir/v2/orderbook/USDTIRT"
-            async with session.get(url_nobitex, timeout=5) as resp:
+            # منبع اول: والکس
+            async with session.get("https://api.wallex.ir/v1/currencies/stats", timeout=4) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if "lastTradePrice" in data:
-                        raw_p = float(data["lastTradePrice"])
-                        prices["USD_IRT"] = raw_p / 10 if raw_p > 500000 else raw_p
-                    elif "bids" in data and len(data["bids"]) > 0:
-                        raw_p = float(data["bids"][0][0])
-                        prices["USD_IRT"] = raw_p / 10 if raw_p > 500000 else raw_p
+                    if data.get("success") and "result" in data:
+                        for coin in data["result"]:
+                            if coin.get("key") == "USDT":
+                                prices["USD_IRT"] = float(coin.get("price", 186000))
+                                break
     except Exception as e:
-        logger.error(f"Nobitex USDT Fetch Error: {e}")
+        logger.error(f"Wallex Fetch Error: {e}")
 
-    # 2. دریافت قیمت دقیق ترون و تون از CoinGecko
+    # 2. دریافت قیمت ترون و تون از بایننس (Binance API) - بدون قطعی روی Render
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            url_cg = "https://api.coingecko.com/api/v3/simple/price?ids=tron,the-open-network,toncoin,gram&vs_currencies=usd"
-            async with session.get(url_cg, timeout=5) as resp:
+            async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=TRXUSDT", timeout=4) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if "tron" in data: 
-                        prices["TRX_USD"] = float(data["tron"]["usd"])
-                    
-                    if "gram" in data:
-                        prices["TON_USD"] = float(data["gram"]["usd"])
-                    elif "toncoin" in data:
-                        prices["TON_USD"] = float(data["toncoin"]["usd"])
-                    elif "the-open-network" in data:
-                        prices["TON_USD"] = float(data["the-open-network"]["usd"])
+                    if "price" in data:
+                        prices["TRX_USD"] = float(data["price"])
+
+            async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT", timeout=4) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if "price" in data:
+                        prices["TON_USD"] = float(data["price"])
     except Exception as e:
-        logger.error(f"CoinGecko Fetch Error: {e}")
+        logger.error(f"Binance Fetch Error: {e}")
+        # بک‌آپ CoinGecko اگر بایننس در دسترس نبود
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                url_cg = "https://api.coingecko.com/api/v3/simple/price?ids=tron,the-open-network,gram&vs_currencies=usd"
+                async with session.get(url_cg, timeout=4) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if "tron" in data: prices["TRX_USD"] = float(data["tron"]["usd"])
+                        if "the-open-network" in data: prices["TON_USD"] = float(data["the-open-network"]["usd"])
+                        elif "gram" in data: prices["TON_USD"] = float(data["gram"]["usd"])
+        except Exception:
+            pass
 
     return prices
 
@@ -1446,16 +1457,16 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ascii_penis = (
                 "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣿⣿⠃⣠⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⠄⢔⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
