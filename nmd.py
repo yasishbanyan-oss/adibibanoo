@@ -6,6 +6,7 @@ import random
 import re
 import shutil
 import sys
+import asyncio
 import threading
 import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -37,6 +38,8 @@ OWNER_ID = 6749949992
 DB_FILE = "db.json"
 TEMP_DB_FILE = "db.json.tmp"
 BROKEN_DB_FILE = "db.json.broken"
+
+BROADCAST_CANCEL_FLAG = False
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -80,7 +83,7 @@ UNPIN_PATTERNS = ["حذف پین", "حذف سنجاق", "آن پین", "ان‌�
 
 PERSIAN_PERMUTATIONS = {
     '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
-    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
+    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '٨': '8', '۹': '9',
     '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
 }
 
@@ -162,6 +165,9 @@ def get_default_db_structure() -> dict:
         "user_stats": {},
         "action_records": {},
         "welcome_settings": {},
+        "comment_settings": {},
+        "commented_channel_posts": [],
+        "started_users": {},
         "features": {
             "world_time": True,
             "handsome": True,
@@ -187,7 +193,9 @@ def get_default_db_structure() -> dict:
             "waiting_add_poem": [],
             "waiting_broadcast_group": [],
             "waiting_broadcast_msg": {},
-            "waiting_welcome_msg": {}
+            "waiting_welcome_msg": {},
+            "waiting_comment_msg": {},
+            "waiting_user_broadcast_msg": []
         }
     }
 
@@ -361,7 +369,7 @@ def set_cooldown_data(db: dict, chat_id: int, feature: str, data: dict):
     save_db()
 
 # ==========================================
-# WELCOME & JOB QUEUE
+# WELCOME & AUTOMATIC CHANNEL COMMENT & JOBS
 # ==========================================
 async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = update.my_chat_member
@@ -404,7 +412,7 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
 
         user_mention = get_user_mention(member.id, member.full_name)
 
-        # اگر پیام اختصاصی تنظیم نشده باشد -> پیام پیش‌فرض
+        # ارسال پیام Welcome پیش‌فرض سیستم
         if not welcome_settings.get("custom", False):
             default_text = f"سلام {user_mention} ، به گروه {chat_title} خوش آمدید!\nساعت {time_str} روز {day_fa}!"
             try:
@@ -413,34 +421,72 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
                 logger.error(f"Error sending default welcome: {e}")
             continue
 
-        # ارسال پیام Welcome اختصاصی با حفظ Media و Formatting
-        msg_type = welcome_settings.get("type", "text")
-        raw_text = welcome_settings.get("text") or ""
-        file_id = welcome_settings.get("file_id")
+        # ارسال پیام Welcome اختصاصی با حفظ کامل Formatting و Custom Emoji
+        saved_msg_id = welcome_settings.get("saved_msg_id")
+        from_chat_id = welcome_settings.get("saved_from_chat_id")
 
-        # جای‌گذاری متغیرها در متن/کپشن
-        processed_text = raw_text.replace("USERNAME", user_mention)\
-                                 .replace("XXXX", chat_title)\
-                                 .replace("TIME", time_str)\
-                                 .replace("DAY", day_fa)
+        if saved_msg_id and from_chat_id:
+            try:
+                await context.bot.copy_message(
+                    chat_id=chat.id,
+                    from_chat_id=from_chat_id,
+                    message_id=saved_msg_id,
+                    reply_to_message_id=update.message.message_id
+                )
+            except Exception as e:
+                logger.exception(f"Error copying custom welcome message: {e}")
 
-        try:
-            if msg_type == "text":
-                await update.message.reply_text(processed_text, parse_mode=ParseMode.HTML)
-            elif msg_type == "photo":
-                await update.message.reply_photo(photo=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
-            elif msg_type == "animation":
-                await update.message.reply_animation(animation=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
-            elif msg_type == "video":
-                await update.message.reply_video(video=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
-            elif msg_type == "document":
-                await update.message.reply_document(document=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
-            elif msg_type == "audio":
-                await update.message.reply_audio(audio=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
-            elif msg_type == "sticker":
-                await update.message.reply_sticker(sticker=file_id)
-        except Exception as e:
-            logger.exception(f"Error sending custom welcome: {e}")
+async def handle_automatic_channel_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg:
+        return
+
+    # بررسی اینکه پیام ارسال شده یک پست اتوماتیک فورواردشده از کانال است
+    if not getattr(msg, "is_automatic_forward", False):
+        return
+
+    chat = update.effective_chat
+    if not chat or chat.type not in ["group", "supergroup"]:
+        return
+
+    chat_id_str = str(chat.id)
+    db = load_db()
+
+    comment_settings = db.get("comment_settings", {}).get(chat_id_str, {})
+    if not comment_settings.get("enabled", False):
+        return
+
+    # جلوگیری از ارسال کامنت تکراری برای یک پست
+    msg_key = f"{chat.id}_{msg.message_id}"
+    commented_posts = db.setdefault("commented_channel_posts", [])
+    if msg_key in commented_posts:
+        return
+
+    saved_msg_id = comment_settings.get("saved_msg_id")
+    from_chat_id = comment_settings.get("saved_from_chat_id")
+
+    if not saved_msg_id or not from_chat_id:
+        logger.warning(f"Comment enabled for chat {chat.id} but no comment message saved.")
+        return
+
+    try:
+        await context.bot.copy_message(
+            chat_id=chat.id,
+            from_chat_id=from_chat_id,
+            message_id=saved_msg_id,
+            reply_to_message_id=msg.message_id
+        )
+        
+        # ذخیره جهت جلوگیری از کامنت تکراری (محدود کردن سایز لیست تا ۵۰۰ مورد)
+        commented_posts.append(msg_key)
+        if len(commented_posts) > 500:
+            commented_posts.pop(0)
+        mark_db_dirty()
+        save_db()
+
+        logger.info(f"[CHANNEL_COMMENT_SENT] Reply to post {msg.message_id} in chat {chat.id}")
+    except Exception as e:
+        logger.exception(f"Error sending automatic channel comment: {e}")
 
 async def hourly_goh_khor_job(context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
@@ -492,11 +538,14 @@ async def post_init(application: Application):
 # ADMIN PANEL RENDERING
 # ==========================================
 async def render_owner_panel_message(query):
+    db = load_db()
+    user_count = len(db.get("started_users", {}))
     buttons = [
         [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef", style="primary")],
         [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
         [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
-        [InlineKeyboardButton("📢 پیام همگانی", callback_data="panel_broadcast", style="primary")]
+        [InlineKeyboardButton("📢 پیام همگانی گروه ها", callback_data="panel_broadcast", style="primary")],
+        [InlineKeyboardButton(f"📢 پیام همگانی کاربران ({user_count})", callback_data="panel_user_broadcast", style="success")]
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     await query.message.edit_text("<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -506,7 +555,8 @@ async def render_group_admin_panel_message(query):
         [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods", style="primary")],
         [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names", style="primary")],
         [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")],
-        [InlineKeyboardButton("👋 مدیریت خوش‌آمدگویی", callback_data="panel_welcome", style="primary")]
+        [InlineKeyboardButton("👋 مدیریت خوش‌آمدگویی", callback_data="panel_welcome", style="primary")],
+        [InlineKeyboardButton("💬 مدیریت کامنت", callback_data="panel_comment", style="primary")]
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     await query.message.edit_text("<b>مدیر محترم گروه 🔰\n\nجهت تنظیمات اختصاصی گروه گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -532,6 +582,46 @@ async def render_welcome_panel_message(query, chat_id: int, db: dict):
         [InlineKeyboardButton("⚙️ تنظیم پیام خوش‌آمد", callback_data="welcome_set", style="success")],
         [InlineKeyboardButton("🗑 حذف پیام اختصاصی", callback_data="welcome_delete_confirm", style="danger")],
         [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_admin_main", style="primary")]
+    ]
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+async def render_comment_panel_message(query, chat_id: int, db: dict):
+    chat_id_str = str(chat_id)
+    c_set = db.get("comment_settings", {}).get(chat_id_str, {})
+    is_enabled = c_set.get("enabled", False)
+    has_custom = c_set.get("custom", False)
+
+    status_str = "✅ فعال" if is_enabled else "❌ خاموش"
+    custom_str = "ذخیره شده" if has_custom else "تنظیم نشده"
+
+    text = (
+        f"💬 <b>سیستم مدیریت کامنت اتوماتیک کانال</b>\n\n"
+        f"<b>وضعیت سیستم:</b> {status_str}\n"
+        f"<b>پیام کامنت:</b> {custom_str}"
+    )
+
+    toggle_btn_text = "❌ خاموش کردن" if is_enabled else "✅ فعال کردن"
+    buttons = [
+        [InlineKeyboardButton("💬 تنظیم کامنت", callback_data="comment_set", style="success")],
+        [InlineKeyboardButton(toggle_btn_text, callback_data="comment_toggle", style="primary")],
+        [InlineKeyboardButton("🗑 حذف کامنت ذخیره‌شده", callback_data="comment_delete", style="danger")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_admin_main", style="primary")]
+    ]
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+async def render_user_broadcast_panel_message(query, db: dict):
+    started_users = db.get("started_users", {})
+    user_count = len(started_users)
+
+    text = (
+        f"📢 <b>پیام همگانی به تمام کاربران خصوصی ربات</b>\n\n"
+        f"👥 <b>تعداد کاربران دریافت‌کننده (Start شده):</b> <code>{user_count}</code> نفر\n\n"
+        f"با کلیک روی دکمه زیر، پیام خود (شامل متن، عکس، GIF، ویدیو، Premium Emoji و...) را بفرستید."
+    )
+
+    buttons = [
+        [InlineKeyboardButton("✉️ ارسال پیام همگانی", callback_data="user_broadcast_send", style="success")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
     ]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -652,6 +742,7 @@ async def dwoz_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 # CALLBACK QUERY HANDLER
 # ==========================================
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global BROADCAST_CANCEL_FLAG
     query = update.callback_query
     data = query.data
     user_id = query.from_user.id
@@ -663,7 +754,89 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Coming soon..!", show_alert=True)
         return
 
-    # ۲. بخش مدیریت خوش‌آمدگویی
+    # ۲. پنل BROADCAST کاربران
+    elif data == "panel_user_broadcast":
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        await render_user_broadcast_panel_message(query, db)
+        return
+
+    elif data == "user_broadcast_send":
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        db["states"]["waiting_user_broadcast_msg"] = [user_id]
+        mark_db_dirty()
+        save_db()
+        await query.message.edit_text(
+            "<b>✉️ پیام مورد نظر برای ارسال به تمام کاربران خصوصی ربات را بفرستید:</b>\n\n"
+            "می‌توانید متن، عکس، GIF، ویدیو، Premium Emoji و... ارسال کنید.\n"
+            "برای لغو دستور /cancel را بزنید.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    elif data == "user_broadcast_cancel":
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        BROADCAST_CANCEL_FLAG = True
+        await query.answer("دستور لغو ارسال شد. ارسال پیام متوقف می‌شود...", show_alert=True)
+        return
+
+    # ۳. پنل مدیریت کامنت
+    elif data == "panel_comment":
+        if not await is_admin_or_owner(context, chat_id, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        await render_comment_panel_message(query, chat_id, db)
+        return
+
+    elif data == "comment_toggle":
+        if not await is_admin_or_owner(context, chat_id, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        chat_id_str = str(chat_id)
+        if "comment_settings" not in db: db["comment_settings"] = {}
+        c_set = db["comment_settings"].setdefault(chat_id_str, {"enabled": False, "custom": False})
+        c_set["enabled"] = not c_set.get("enabled", False)
+        mark_db_dirty()
+        save_db()
+        await render_comment_panel_message(query, chat_id, db)
+        return
+
+    elif data == "comment_set":
+        if not await is_admin_or_owner(context, chat_id, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        db["states"]["waiting_comment_msg"][user_id] = chat_id
+        mark_db_dirty()
+        save_db()
+        prompt_text = (
+            "<b>💬 پیام کامنتی که می‌خواهید ربات زیر پست‌های کانال ارسال کند را بفرستید:</b>\n\n"
+            "می‌توانید <b>متن، عکس، GIF، ویدیو، استیکر، صوت یا فایل</b> به همراه Premium Emoji ارسال کنید.\n\n"
+            "برای لغو /cancel را ارسال کنید."
+        )
+        await query.message.edit_text(prompt_text, parse_mode=ParseMode.HTML)
+        return
+
+    elif data == "comment_delete":
+        if not await is_admin_or_owner(context, chat_id, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        chat_id_str = str(chat_id)
+        if "comment_settings" in db and chat_id_str in db["comment_settings"]:
+            db["comment_settings"][chat_id_str]["custom"] = False
+            db["comment_settings"][chat_id_str].pop("saved_msg_id", None)
+            db["comment_settings"][chat_id_str].pop("saved_from_chat_id", None)
+            mark_db_dirty()
+            save_db()
+        await query.answer("کامنت ذخیره‌شده با موفقیت حذف شد.", show_alert=True)
+        await render_comment_panel_message(query, chat_id, db)
+        return
+
+    # ۴. بخش مدیریت خوش‌آمدگویی
     elif data == "panel_welcome":
         if not await is_admin_or_owner(context, chat_id, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
@@ -725,16 +898,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         chat_id_str = str(chat_id)
         if "welcome_settings" in db and chat_id_str in db["welcome_settings"]:
             db["welcome_settings"][chat_id_str]["custom"] = False
-            db["welcome_settings"][chat_id_str].pop("type", None)
-            db["welcome_settings"][chat_id_str].pop("text", None)
-            db["welcome_settings"][chat_id_str].pop("file_id", None)
+            db["welcome_settings"][chat_id_str].pop("saved_msg_id", None)
+            db["welcome_settings"][chat_id_str].pop("saved_from_chat_id", None)
             mark_db_dirty()
             save_db()
         await query.answer("پیام اختصاصی حذف شد و به حالت پیش‌فرض برگشت.", show_alert=True)
         await render_welcome_panel_message(query, chat_id, db)
         return
 
-    # ۳. دوز آنلاین
+    # ۵. دوز آنلاین
     elif data.startswith("xo_"):
         parts = data.split(":")
         act = parts[0]
@@ -968,7 +1140,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     pass
                 return
 
-    # ۴. سیستم گزارش
+    # ۶. سیستم گزارش
     elif data.startswith("report_"):
         rep_id = data.replace("report_resolve:", "").replace("report_cancel:", "")
         reports = db.get("reports", {})
@@ -1005,7 +1177,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.edit_text(txt, parse_mode=ParseMode.HTML)
             return
 
-    # ۵. امضای شاهدان
+    # ۷. امضای شاهدان
     if data.startswith("sign_action:"):
         rec_id = data.replace("sign_action:", "")
         records = db.get("action_records", {})
@@ -1059,7 +1231,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
-    # ۶. مشاهده آمار تک‌موردی
+    # ۸. مشاهده آمار تک‌موردی
     elif data.startswith("stat_action:"):
         rec_id = data.replace("stat_action:", "")
         records = db.get("action_records", {})
@@ -1072,7 +1244,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("اطلاعات یافت نشد!", show_alert=True)
         return
 
-    # ۷. کاپل
+    # ۹. کاپل
     elif data in ["couple_agree", "couple_disagree"]:
         msg_id = str(query.message.message_id)
         couples = db.get("couples", {})
@@ -1284,6 +1456,28 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_type = update.effective_chat.type
     bot_info = await context.bot.get_me()
+    db = load_db()
+    user = update.effective_user
+
+    # ثبت کاربران Private Chat در لیست started_users برای Broadcast اختصاصی
+    if user and not user.is_bot and chat_type == "private":
+        uid_str = str(user.id)
+        started_users = db.setdefault("started_users", {})
+        now_ts = datetime.now().timestamp()
+        if uid_str not in started_users:
+            started_users[uid_str] = {
+                "user_id": user.id,
+                "username": user.username or "",
+                "fullname": user.full_name or "کاربر",
+                "first_seen": now_ts,
+                "last_seen": now_ts
+            }
+        else:
+            started_users[uid_str]["last_seen"] = now_ts
+            started_users[uid_str]["fullname"] = user.full_name or "کاربر"
+            started_users[uid_str]["username"] = user.username or ""
+        mark_db_dirty()
+        save_db()
     
     if chat_type == "private":
         start_pv_msg = (
@@ -1308,14 +1502,7 @@ async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!")
         return
 
-    buttons = [
-        [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef", style="primary")],
-        [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
-        [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
-        [InlineKeyboardButton("📢 پیام همگانی", callback_data="panel_broadcast", style="primary")]
-    ]
-    keyboard = InlineKeyboardMarkup(buttons)
-    await update.message.reply_text("<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await render_owner_panel_message(update.message)
 
 async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1331,7 +1518,8 @@ async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
         [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods", style="primary")],
         [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names", style="primary")],
         [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")],
-        [InlineKeyboardButton("👋 مدیریت خوش‌آمدگویی", callback_data="panel_welcome", style="primary")]
+        [InlineKeyboardButton("👋 مدیریت خوش‌آمدگویی", callback_data="panel_welcome", style="primary")],
+        [InlineKeyboardButton("💬 مدیریت کامنت", callback_data="panel_comment", style="primary")]
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     await update.message.reply_text("<b>مدیر محترم گروه 🔰\n\nجهت تنظیمات اختصاصی گروه گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -1355,6 +1543,14 @@ async def command_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id in states.get("waiting_welcome_msg", {}):
         del states["waiting_welcome_msg"][user_id]
+        cancelled = True
+
+    if user_id in states.get("waiting_comment_msg", {}):
+        del states["waiting_comment_msg"][user_id]
+        cancelled = True
+
+    if user_id in states.get("waiting_user_broadcast_msg", []):
+        states["waiting_user_broadcast_msg"].remove(user_id)
         cancelled = True
 
     if cancelled:
@@ -1384,6 +1580,7 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # MESSAGE HANDLER
 # ==========================================
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global BROADCAST_CANCEL_FLAG
     if not update.message:
         return
 
@@ -1439,6 +1636,24 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         # --------------------------------------
+        # COMMAND 'کامنت روشن' / 'گودی کامنت روشن'
+        # --------------------------------------
+        if clean_raw in ["کامنت روشن", "گودی کامنت روشن"]:
+            if not await is_admin_or_owner(context, chat_id, user_id):
+                await update.message.reply_text("❌ فقط مدیران گروه دسترسی به این دستور را دارند.")
+                return
+
+            chat_id_str = str(chat_id)
+            if "comment_settings" not in db: db["comment_settings"] = {}
+            c_set = db["comment_settings"].setdefault(chat_id_str, {"enabled": False, "custom": False})
+            c_set["enabled"] = True
+            mark_db_dirty()
+            save_db(force=True)
+
+            await update.message.reply_text("✅ <b>سیستم کامنت اتوماتیک کانال برای این گروه فعال شد.</b>", parse_mode=ParseMode.HTML)
+            return
+
+        # --------------------------------------
         # TEXT COMMAND 'پنل'
         # --------------------------------------
         if clean_raw == "پنل" and await is_admin_or_owner(context, chat_id, user_id):
@@ -1446,45 +1661,94 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # ADMIN WAITING STATES
+        # ADMIN & OWNER WAITING STATES
         # --------------------------------------
         if await is_admin_or_owner(context, chat_id, user_id):
+            # ۱. ارسال BROADCAST خصوصی به تمام کاربران
+            if user_id in db["states"].get("waiting_user_broadcast_msg", []) and user_id == OWNER_ID:
+                db["states"]["waiting_user_broadcast_msg"].remove(user_id)
+                mark_db_dirty()
+                save_db(force=True)
+
+                started_users = db.get("started_users", {})
+                total_users = len(started_users)
+
+                if total_users == 0:
+                    await update.message.reply_text("❌ هیچ کاربری یافت نشد.")
+                    return
+
+                status_msg = await update.message.reply_text(f"⏳ <b>شروع ارسال پیام همگانی به {total_users} کاربر...</b>", parse_mode=ParseMode.HTML)
+
+                success_count = 0
+                failed_count = 0
+                blocked_count = 0
+                BROADCAST_CANCEL_FLAG = False
+
+                for uid_str, u_data in list(started_users.items()):
+                    if BROADCAST_CANCEL_FLAG:
+                        break
+
+                    target_uid = u_data["user_id"]
+                    try:
+                        await context.bot.copy_message(
+                            chat_id=target_uid,
+                            from_chat_id=update.message.chat_id,
+                            message_id=update.message.message_id
+                        )
+                        success_count += 1
+                        await asyncio.sleep(0.05) # کنترل Rate Limit ارسال
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if "blocked" in err_str or "user is declassified" in err_str or "chat not found" in err_str:
+                            blocked_count += 1
+                        else:
+                            failed_count += 1
+
+                report_text = (
+                    f"📢 <b>عملیات ارسال پیام همگانی پایان یافت.</b>\n\n"
+                    f"👥 <b>کل کاربران:</b> {total_users}\n"
+                    f"✅ <b>ارسال موفق:</b> {success_count}\n"
+                    f"❌ <b>ناموفق:</b> {failed_count}\n"
+                    f"🚫 <b>بلاک / لغو شده:</b> {blocked_count}"
+                )
+                try:
+                    await status_msg.edit_text(report_text, parse_mode=ParseMode.HTML)
+                except Exception:
+                    await update.message.reply_text(report_text, parse_mode=ParseMode.HTML)
+                return
+
+            # ۲. ذخیره کامنت اختصاصی کانال
+            if user_id in db["states"].get("waiting_comment_msg", {}):
+                target_chat_id = db["states"]["waiting_comment_msg"][user_id]
+                del db["states"]["waiting_comment_msg"][user_id]
+
+                chat_id_str = str(target_chat_id)
+                if "comment_settings" not in db: db["comment_settings"] = {}
+                
+                db["comment_settings"][chat_id_str] = {
+                    "enabled": True,
+                    "custom": True,
+                    "saved_msg_id": update.message.message_id,
+                    "saved_from_chat_id": update.message.chat_id
+                }
+                mark_db_dirty()
+                save_db(force=True)
+
+                await update.message.reply_text("✅ <b>پیام کامنت اتوماتیک با موفقیت ذخیره و فعال شد!</b>", parse_mode=ParseMode.HTML)
+                return
+
+            # ۳. ذخیره خوش‌آمدگویی اختصاصی
             if user_id in db["states"].get("waiting_welcome_msg", {}):
                 target_chat_id = db["states"]["waiting_welcome_msg"][user_id]
                 del db["states"]["waiting_welcome_msg"][user_id]
-
-                msg = update.message
-                msg_type = "text"
-                file_id = None
-                text_content = msg.text or msg.caption or ""
-
-                if msg.photo:
-                    msg_type = "photo"
-                    file_id = msg.photo[-1].file_id
-                elif msg.animation:
-                    msg_type = "animation"
-                    file_id = msg.animation.file_id
-                elif msg.video:
-                    msg_type = "video"
-                    file_id = msg.video.file_id
-                elif msg.document:
-                    msg_type = "document"
-                    file_id = msg.document.file_id
-                elif msg.audio:
-                    msg_type = "audio"
-                    file_id = msg.audio.file_id
-                elif msg.sticker:
-                    msg_type = "sticker"
-                    file_id = msg.sticker.file_id
 
                 chat_id_str = str(target_chat_id)
                 if "welcome_settings" not in db: db["welcome_settings"] = {}
                 db["welcome_settings"][chat_id_str] = {
                     "enabled": True,
                     "custom": True,
-                    "type": msg_type,
-                    "file_id": file_id,
-                    "text": text_content
+                    "saved_msg_id": update.message.message_id,
+                    "saved_from_chat_id": update.message.chat_id
                 }
                 mark_db_dirty()
                 save_db(force=True)
@@ -1492,6 +1756,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("✅ <b>پیام خوش‌آمدگویی اختصاصی این گروه با موفقیت ذخیره شد!</b>", parse_mode=ParseMode.HTML)
                 return
 
+            # ۴. ارسال پیام همگانی گروه ها
             if user_id in db["states"].get("waiting_broadcast_msg", {}) and user_id == OWNER_ID:
                 target_cid = db["states"]["waiting_broadcast_msg"][user_id]
                 del db["states"]["waiting_broadcast_msg"][user_id]
@@ -1512,6 +1777,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f"❌ خطا در ارسال پیام همگانی: {e}")
                 return
 
+            # ۵. تنظیم رسانه لف
             if user_id in db["states"].get("waiting_lef_media", []) and user_id == OWNER_ID:
                 media = None
                 if update.message.sticker: media = {"type": "sticker", "file_id": update.message.sticker.file_id}
@@ -1667,13 +1933,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳ screen⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻ memory⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⣷⠄⠪ screen⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟ stone⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿\n"
                 "⣿⣿⠛⠉⠁⠄⢕⡳⣽⡾⣿⢽⣯⡿⣮⢚⣅⠹⣿⣿⣿\n"
                 "⡿⠋⠄⠄⠄⠄⢀⠒⠝⣞⢿⡿⣿⣽⢿⡽⣧⣳⡅⠌⠻⣿\n"
@@ -2177,7 +2443,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     }
                     set_cooldown_data(db, chat_id, "ship", {"u1": u1_dict, "u2": u2_dict, "last_msg_id": sent_msg.message_id})
                 else:
-                    await update.message.reply_text("❌ اعضای کافی موجود نیست!")
+                    await update.message.reply_text(
+                        '<b>❌ اعضای کافی موجود نیست! <tg-emoji emoji-id="5857415006022278161">❌</tg-emoji></b>',
+                        parse_mode=ParseMode.HTML
+                    )
 
         # ۱۰. پیشنهاد غذا با ایموجی پریمیوم
         elif ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
@@ -2244,16 +2513,19 @@ def main():
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
-    # 1. سیستم خوش‌آمدگویی اعضای جدید
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
+    # 1. سیستم کامنت خودکار برای پست‌های کانال متصل به گروه بحث
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.IS_AUTOMATIC_FORWARD, handle_automatic_channel_comments), group=-3)
 
-    # 2. اختصاصی برای بازی دوز با بالاترین اولویت (group=-1)
+    # 2. سیستم خوش‌آمادگویی اعضای جدید
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
+
+    # 3. اختصاصی برای بازی دوز با بالاترین اولویت (group=-1)
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler),
         group=-1
     )
 
-    # 3. هاندر عمومی پیام‌ها
+    # 4. هاندر عمومی پیام‌ها
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_messages)
     )
