@@ -75,6 +75,9 @@ DODOL_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+PIN_PATTERNS = ["سنجاق", "پین", "pin"]
+UNPIN_PATTERNS = ["حذف پین", "حذف سنجاق", "آن پین", "ان‌پین", "حذف‌سنجاق", "حذف‌پین", "آن‌پین", "unpin", "un pin"]
+
 PERSIAN_PERMUTATIONS = {
     '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
     '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
@@ -103,11 +106,15 @@ def normalize_text(text: str) -> str:
     words = text.strip().split()
     return " ".join(words)
 
-def get_persian_date_str():
+def get_persian_date_info():
     weekdays = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه", "شنبه", "یکشنبه"]
     now = datetime.now(ZoneInfo("Asia/Tehran"))
     wd = weekdays[now.weekday()]
     time_str = now.strftime("%H:%M")
+    return wd, time_str
+
+def get_persian_date_str():
+    wd, time_str = get_persian_date_info()
     return f"{wd} ، ساعت {time_str}"
 
 # ==========================================
@@ -154,6 +161,7 @@ def get_default_db_structure() -> dict:
         "xo_games": {},
         "user_stats": {},
         "action_records": {},
+        "welcome_settings": {},
         "features": {
             "world_time": True,
             "handsome": True,
@@ -178,7 +186,8 @@ def get_default_db_structure() -> dict:
             "waiting_poem_names": [],
             "waiting_add_poem": [],
             "waiting_broadcast_group": [],
-            "waiting_broadcast_msg": {}
+            "waiting_broadcast_msg": {},
+            "waiting_welcome_msg": {}
         }
     }
 
@@ -372,6 +381,67 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Failed to send welcome message: {e}")
 
+async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.new_chat_members:
+        return
+
+    chat = update.effective_chat
+    chat_id_str = str(chat.id)
+    db = load_db()
+
+    welcome_settings = db.get("welcome_settings", {}).get(chat_id_str, {})
+    
+    # بررسی فعال بودن خوش‌آمدگویی در گروه
+    if not welcome_settings.get("enabled", True):
+        return
+
+    day_fa, time_str = get_persian_date_info()
+    chat_title = html.escape(chat.title or "گروه")
+
+    for member in update.message.new_chat_members:
+        if member.is_bot:
+            continue
+
+        user_mention = get_user_mention(member.id, member.full_name)
+
+        # اگر پیام اختصاصی تنظیم نشده باشد -> پیام پیش‌فرض
+        if not welcome_settings.get("custom", False):
+            default_text = f"سلام {user_mention} ، به گروه {chat_title} خوش آمدید!\nساعت {time_str} روز {day_fa}!"
+            try:
+                await update.message.reply_text(default_text, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Error sending default welcome: {e}")
+            continue
+
+        # ارسال پیام Welcome اختصاصی با حفظ Media و Formatting
+        msg_type = welcome_settings.get("type", "text")
+        raw_text = welcome_settings.get("text") or ""
+        file_id = welcome_settings.get("file_id")
+
+        # جای‌گذاری متغیرها در متن/کپشن
+        processed_text = raw_text.replace("USERNAME", user_mention)\
+                                 .replace("XXXX", chat_title)\
+                                 .replace("TIME", time_str)\
+                                 .replace("DAY", day_fa)
+
+        try:
+            if msg_type == "text":
+                await update.message.reply_text(processed_text, parse_mode=ParseMode.HTML)
+            elif msg_type == "photo":
+                await update.message.reply_photo(photo=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
+            elif msg_type == "animation":
+                await update.message.reply_animation(animation=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
+            elif msg_type == "video":
+                await update.message.reply_video(video=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
+            elif msg_type == "document":
+                await update.message.reply_document(document=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
+            elif msg_type == "audio":
+                await update.message.reply_audio(audio=file_id, caption=processed_text, parse_mode=ParseMode.HTML)
+            elif msg_type == "sticker":
+                await update.message.reply_sticker(sticker=file_id)
+        except Exception as e:
+            logger.exception(f"Error sending custom welcome: {e}")
+
 async def hourly_goh_khor_job(context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     if not db["features"].get("goh_khor", True):
@@ -423,22 +493,47 @@ async def post_init(application: Application):
 # ==========================================
 async def render_owner_panel_message(query):
     buttons = [
-        [InlineKeyboardButton("رسانه لف", callback_data="panel_media_lef", style="primary")],
-        [InlineKeyboardButton("زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
-        [InlineKeyboardButton("مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
-        [InlineKeyboardButton("پیام همگانی", callback_data="panel_broadcast", style="primary")]
+        [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef", style="primary")],
+        [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
+        [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
+        [InlineKeyboardButton("📢 پیام همگانی", callback_data="panel_broadcast", style="primary")]
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     await query.message.edit_text("<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 async def render_group_admin_panel_message(query):
     buttons = [
-        [InlineKeyboardButton("مدیریت غذاها", callback_data="panel_foods", style="primary")],
-        [InlineKeyboardButton("اسامی شعرها", callback_data="panel_poem_names", style="primary")],
-        [InlineKeyboardButton("افزودن شعر جدید", callback_data="panel_add_poem", style="success")]
+        [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods", style="primary")],
+        [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names", style="primary")],
+        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")],
+        [InlineKeyboardButton("👋 مدیریت خوش‌آمدگویی", callback_data="panel_welcome", style="primary")]
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     await query.message.edit_text("<b>مدیر محترم گروه 🔰\n\nجهت تنظیمات اختصاصی گروه گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+async def render_welcome_panel_message(query, chat_id: int, db: dict):
+    chat_id_str = str(chat_id)
+    w_set = db.get("welcome_settings", {}).get(chat_id_str, {})
+    is_enabled = w_set.get("enabled", True)
+    has_custom = w_set.get("custom", False)
+
+    status_str = "✅ فعال" if is_enabled else "❌ غیرفعال"
+    custom_str = "اختصاصی تنظیم شده" if has_custom else "پیش‌فرض سیستم"
+
+    text = (
+        f"👋 <b>مدیریت خوش‌آمدگویی گروه</b>\n\n"
+        f"<b>وضعیت فعلی:</b> {status_str}\n"
+        f"<b>نوع پیام:</b> {custom_str}"
+    )
+
+    toggle_btn_text = "❌ غیرفعال کردن" if is_enabled else "✅ فعال کردن"
+    buttons = [
+        [InlineKeyboardButton(toggle_btn_text, callback_data="welcome_toggle", style="primary")],
+        [InlineKeyboardButton("⚙️ تنظیم پیام خوش‌آمد", callback_data="welcome_set", style="success")],
+        [InlineKeyboardButton("🗑 حذف پیام اختصاصی", callback_data="welcome_delete_confirm", style="danger")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_admin_main", style="primary")]
+    ]
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 async def render_features_panel_message(query, db: dict):
     feats = db.get("features", {})
@@ -446,20 +541,20 @@ async def render_features_panel_message(query, db: dict):
         return "✅" if feats.get(key, True) else "❌"
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"{status('world_time')} ساعت جهانی", callback_data="toggle_world_time", style="primary")],
-        [InlineKeyboardButton(f"{status('handsome')} خوشتیپ", callback_data="toggle_handsome", style="primary")],
-        [InlineKeyboardButton(f"{status('jende')} جنده", callback_data="toggle_jende", style="primary")],
-        [InlineKeyboardButton(f"{status('koni')} کونی", callback_data="toggle_koni", style="primary")],
-        [InlineKeyboardButton(f"{status('jaghi')} جقی", callback_data="toggle_jaghi", style="primary")],
-        [InlineKeyboardButton(f"{status('koskhal')} کصخل", callback_data="toggle_koskhal", style="primary")],
-        [InlineKeyboardButton(f"{status('sexy')} سکسی", callback_data="toggle_sexy", style="primary")],
-        [InlineKeyboardButton(f"{status('jazab')} جذاب", callback_data="toggle_jazab", style="primary")],
-        [InlineKeyboardButton(f"{status('ship')} شیپ", callback_data="toggle_ship", style="primary")],
-        [InlineKeyboardButton(f"{status('food')} غذا", callback_data="toggle_food", style="primary")],
-        [InlineKeyboardButton(f"{status('lef')} لف", callback_data="toggle_lef", style="primary")],
-        [InlineKeyboardButton(f"{status('goh_khor')} گوه خور", callback_data="toggle_goh_khor", style="primary")],
-        [InlineKeyboardButton(f"{status('koni_percent')} درصد", callback_data="toggle_koni_percent", style="primary")],
-        [InlineKeyboardButton("بازگشت", callback_data="panel_owner_main", style="primary")]
+        [InlineKeyboardButton(f"{status('world_time')} 🌍 ساعت جهانی", callback_data="toggle_world_time", style="primary")],
+        [InlineKeyboardButton(f"{status('handsome')} 😎 خوشتیپ", callback_data="toggle_handsome", style="primary")],
+        [InlineKeyboardButton(f"{status('jende')} 😂 جنده", callback_data="toggle_jende", style="primary")],
+        [InlineKeyboardButton(f"{status('koni')} 🤣 کونی", callback_data="toggle_koni", style="primary")],
+        [InlineKeyboardButton(f"{status('jaghi')} 🍌 جقی", callback_data="toggle_jaghi", style="primary")],
+        [InlineKeyboardButton(f"{status('koskhal')} 🤪 کصخل", callback_data="toggle_koskhal", style="primary")],
+        [InlineKeyboardButton(f"{status('sexy')} 😈 سکسی", callback_data="toggle_sexy", style="primary")],
+        [InlineKeyboardButton(f"{status('jazab')} ☕️ جذاب", callback_data="toggle_jazab", style="primary")],
+        [InlineKeyboardButton(f"{status('ship')} ❤️ شیپ", callback_data="toggle_ship", style="primary")],
+        [InlineKeyboardButton(f"{status('food')} 🍽 غذا", callback_data="toggle_food", style="primary")],
+        [InlineKeyboardButton(f"{status('lef')} 🖼 لف", callback_data="toggle_lef", style="primary")],
+        [InlineKeyboardButton(f"{status('goh_khor')} 🏆 گوه خور", callback_data="toggle_goh_khor", style="primary")],
+        [InlineKeyboardButton(f"{status('koni_percent')} 📊 درصد", callback_data="toggle_koni_percent", style="primary")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
     ])
     await query.message.edit_text("⚙ <b>مدیریت قابلیت‌ها</b>\n\nبا کلیک روی هر دکمه، وضعیت آن را روشن یا خاموش کنید:", reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
@@ -560,6 +655,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     data = query.data
     user_id = query.from_user.id
+    chat_id = query.message.chat.id if query.message else 0
     db = load_db()
 
     # ۱. کمک / راهنما
@@ -567,7 +663,78 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Coming soon..!", show_alert=True)
         return
 
-    # ۲. دوز آنلاین
+    # ۲. بخش مدیریت خوش‌آمدگویی
+    elif data == "panel_welcome":
+        if not await is_admin_or_owner(context, chat_id, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        await render_welcome_panel_message(query, chat_id, db)
+        return
+
+    elif data == "welcome_toggle":
+        if not await is_admin_or_owner(context, chat_id, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        chat_id_str = str(chat_id)
+        if "welcome_settings" not in db: db["welcome_settings"] = {}
+        w_set = db["welcome_settings"].setdefault(chat_id_str, {"enabled": True, "custom": False})
+        w_set["enabled"] = not w_set.get("enabled", True)
+        mark_db_dirty()
+        save_db()
+        await render_welcome_panel_message(query, chat_id, db)
+        return
+
+    elif data == "welcome_set":
+        if not await is_admin_or_owner(context, chat_id, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        db["states"]["waiting_welcome_msg"][user_id] = chat_id
+        mark_db_dirty()
+        save_db()
+        prompt_text = (
+            "<b>👋 تنظیم پیام خوش‌آمدگویی اختصاصی:</b>\n\n"
+            "لطفاً پیام خوش‌آمدگویی جدید را ارسال کنید.\n"
+            "می‌توانید <b>متن، عکس، GIF، ویدیو، فایل یا صوت</b> ارسال کنید.\n\n"
+            "<b>متغیرهای قابل استفاده در متن یا کپشن:</b>\n"
+            "• <code>USERNAME</code> ➔ منشن واقعی کاربر جدید\n"
+            "• <code>XXXX</code> ➔ نام گروه\n"
+            "• <code>TIME</code> ➔ ساعت فعلی\n"
+            "• <code>DAY</code> ➔ روز هفته (فارسی)\n\n"
+            "برای لغو /cancel را ارسال کنید."
+        )
+        await query.message.edit_text(prompt_text, parse_mode=ParseMode.HTML)
+        return
+
+    elif data == "welcome_delete_confirm":
+        if not await is_admin_or_owner(context, chat_id, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ بله، حذف شود", callback_data="welcome_delete_do", style="danger"),
+                InlineKeyboardButton("❌ لغو", callback_data="panel_welcome", style="primary")
+            ]
+        ])
+        await query.message.edit_text("<b>آیا از حذف پیام خوش‌آمد اختصاصی و بازگشت به حالت پیش‌فرض اطمینان دارید؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+
+    elif data == "welcome_delete_do":
+        if not await is_admin_or_owner(context, chat_id, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        chat_id_str = str(chat_id)
+        if "welcome_settings" in db and chat_id_str in db["welcome_settings"]:
+            db["welcome_settings"][chat_id_str]["custom"] = False
+            db["welcome_settings"][chat_id_str].pop("type", None)
+            db["welcome_settings"][chat_id_str].pop("text", None)
+            db["welcome_settings"][chat_id_str].pop("file_id", None)
+            mark_db_dirty()
+            save_db()
+        await query.answer("پیام اختصاصی حذف شد و به حالت پیش‌فرض برگشت.", show_alert=True)
+        await render_welcome_panel_message(query, chat_id, db)
+        return
+
+    # ۳. دوز آنلاین
     elif data.startswith("xo_"):
         parts = data.split(":")
         act = parts[0]
@@ -801,7 +968,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     pass
                 return
 
-    # ۳. سیستم گزارش
+    # ۴. سیستم گزارش
     elif data.startswith("report_"):
         rep_id = data.replace("report_resolve:", "").replace("report_cancel:", "")
         reports = db.get("reports", {})
@@ -838,7 +1005,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.edit_text(txt, parse_mode=ParseMode.HTML)
             return
 
-    # ۴. امضای شاهدان
+    # ۵. امضای شاهدان
     if data.startswith("sign_action:"):
         rec_id = data.replace("sign_action:", "")
         records = db.get("action_records", {})
@@ -892,7 +1059,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
-    # ۵. مشاهده آمار تک‌موردی
+    # ۶. مشاهده آمار تک‌موردی
     elif data.startswith("stat_action:"):
         rec_id = data.replace("stat_action:", "")
         records = db.get("action_records", {})
@@ -905,7 +1072,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("اطلاعات یافت نشد!", show_alert=True)
         return
 
-    # ۶. کاپل
+    # ۷. کاپل
     elif data in ["couple_agree", "couple_disagree"]:
         msg_id = str(query.message.message_id)
         couples = db.get("couples", {})
@@ -1163,7 +1330,8 @@ async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
     buttons = [
         [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods", style="primary")],
         [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names", style="primary")],
-        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")]
+        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")],
+        [InlineKeyboardButton("👋 مدیریت خوش‌آمدگویی", callback_data="panel_welcome", style="primary")]
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     await update.message.reply_text("<b>مدیر محترم گروه 🔰\n\nجهت تنظیمات اختصاصی گروه گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -1183,6 +1351,10 @@ async def command_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     if user_id in states.get("waiting_broadcast_msg", {}):
         del states["waiting_broadcast_msg"][user_id]
+        cancelled = True
+
+    if user_id in states.get("waiting_welcome_msg", {}):
+        del states["waiting_welcome_msg"][user_id]
         cancelled = True
 
     if cancelled:
@@ -1229,6 +1401,44 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         norm_text = normalize_text(raw_text)
 
         # --------------------------------------
+        # HANDLER PIN / UNPIN COMMANDS (ADMIN ONLY)
+        # --------------------------------------
+        if clean_raw in PIN_PATTERNS or clean_raw in UNPIN_PATTERNS:
+            if not await is_admin_or_owner(context, chat_id, user_id):
+                await update.message.reply_text("❌ فقط مدیران گروه دسترسی اجرای این دستور را دارند.")
+                return
+
+            if not update.message.reply_to_message:
+                await update.message.reply_text("<b>برای استفاده از این دستور باید روی پیام مورد نظر ریپلای کنید!</b>", parse_mode=ParseMode.HTML)
+                return
+
+            target_msg_id = update.message.reply_to_message.message_id
+
+            if clean_raw in PIN_PATTERNS:
+                try:
+                    await context.bot.pin_chat_message(chat_id=chat_id, message_id=target_msg_id)
+                    await update.message.reply_text(
+                        '<b>پیامتو پین کردم عزیزم! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>',
+                        parse_mode=ParseMode.HTML
+                    )
+                except Exception as e:
+                    logger.error(f"Pin Error: {e}")
+                    await update.message.reply_text("ربات دسترسی سنجاق کردن پیام‌ها را ندارد.")
+                return
+
+            elif clean_raw in UNPIN_PATTERNS:
+                try:
+                    await context.bot.unpin_chat_message(chat_id=chat_id, message_id=target_msg_id)
+                    await update.message.reply_text(
+                        '<b>پیامو از پین دراوردم رفیق! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>',
+                        parse_mode=ParseMode.HTML
+                    )
+                except Exception as e:
+                    logger.error(f"Unpin Error: {e}")
+                    await update.message.reply_text("ربات دسترسی تغییر پیام‌های سنجاق‌شده را ندارد.")
+                return
+
+        # --------------------------------------
         # TEXT COMMAND 'پنل'
         # --------------------------------------
         if clean_raw == "پنل" and await is_admin_or_owner(context, chat_id, user_id):
@@ -1239,6 +1449,49 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ADMIN WAITING STATES
         # --------------------------------------
         if await is_admin_or_owner(context, chat_id, user_id):
+            if user_id in db["states"].get("waiting_welcome_msg", {}):
+                target_chat_id = db["states"]["waiting_welcome_msg"][user_id]
+                del db["states"]["waiting_welcome_msg"][user_id]
+
+                msg = update.message
+                msg_type = "text"
+                file_id = None
+                text_content = msg.text or msg.caption or ""
+
+                if msg.photo:
+                    msg_type = "photo"
+                    file_id = msg.photo[-1].file_id
+                elif msg.animation:
+                    msg_type = "animation"
+                    file_id = msg.animation.file_id
+                elif msg.video:
+                    msg_type = "video"
+                    file_id = msg.video.file_id
+                elif msg.document:
+                    msg_type = "document"
+                    file_id = msg.document.file_id
+                elif msg.audio:
+                    msg_type = "audio"
+                    file_id = msg.audio.file_id
+                elif msg.sticker:
+                    msg_type = "sticker"
+                    file_id = msg.sticker.file_id
+
+                chat_id_str = str(target_chat_id)
+                if "welcome_settings" not in db: db["welcome_settings"] = {}
+                db["welcome_settings"][chat_id_str] = {
+                    "enabled": True,
+                    "custom": True,
+                    "type": msg_type,
+                    "file_id": file_id,
+                    "text": text_content
+                }
+                mark_db_dirty()
+                save_db(force=True)
+
+                await update.message.reply_text("✅ <b>پیام خوش‌آمدگویی اختصاصی این گروه با موفقیت ذخیره شد!</b>", parse_mode=ParseMode.HTML)
+                return
+
             if user_id in db["states"].get("waiting_broadcast_msg", {}) and user_id == OWNER_ID:
                 target_cid = db["states"]["waiting_broadcast_msg"][user_id]
                 del db["states"]["waiting_broadcast_msg"][user_id]
@@ -1363,14 +1616,21 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # REPORT SYSTEM / سیستم گزارش با ایموجی پریمیوم
+        # REPORT SYSTEM / سیستم گزارش با ایموجی پریمیوم & پاسخ دفاعی ربات
         # --------------------------------------
         if clean_raw in ["گزارش", "report"] and update.message.reply_to_message:
+            target_msg = update.message.reply_to_message
+            # اگر کاربر روی پیام خود ربات گزارش بزند:
+            if target_msg.from_user and target_msg.from_user.id == context.bot.id:
+                reply_bot_text = '<b>منو گزارش میدی؟! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>'
+                await update.message.reply_text(reply_bot_text, parse_mode=ParseMode.HTML)
+                return
+
             rep_id = f"{chat_id}_{update.message.message_id}"
             if "reports" not in db: db["reports"] = {}
             db["reports"][rep_id] = {
                 "reporter_id": user_id,
-                "target_msg_id": update.message.reply_to_message.message_id
+                "target_msg_id": target_msg.message_id
             }
             mark_db_dirty()
             save_db()
@@ -1407,13 +1667,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⡄⢨⣻⣽⣿ memory⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳ screen⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻ memory⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⣷⠄⠪ screen⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿\n"
                 "⣿⣿⠛⠉⠁⠄⢕⡳⣽⡾⣿⢽⣯⡿⣮⢚⣅⠹⣿⣿⣿\n"
                 "⡿⠋⠄⠄⠄⠄⢀⠒⠝⣞⢿⡿⣿⣽⢿⡽⣧⣳⡅⠌⠻⣿\n"
@@ -1425,7 +1685,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # BOT NAME RESPONSES با ایموجی پریمیوم
+        # BOT NAME RESPONSES با ایموجی پریمیوم (پاسخ به «گودی» بدون نیاز به Reply)
         # --------------------------------------
         is_reply_to_bot = (
             update.message.reply_to_message and 
@@ -1443,11 +1703,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        if is_reply_to_bot and clean_raw in ["تو کی هستی", "تو کی هستی؟"]:
+        if (is_reply_to_bot and clean_raw in ["تو کی هستی", "تو کی هستی؟"]):
             await update.message.reply_text('<b>من گودی هستم خوشگله! <tg-emoji emoji-id="5321415182109401472">😽</tg-emoji></b>', parse_mode=ParseMode.HTML)
             return
 
-        elif is_reply_to_bot and clean_raw in ["گودی", "گودی؟"]:
+        elif clean_raw == "گودی" or (is_reply_to_bot and clean_raw in ["گودی", "گودی؟"]):
             await update.message.reply_text('<b>بله خودم هستم چیکارم دارین؟ <tg-emoji emoji-id="5276088141671846201">🌟</tg-emoji></b>', parse_mode=ParseMode.HTML)
             return
 
@@ -1984,13 +2244,16 @@ def main():
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
-    # 1. اختصاصی برای بازی دوز با بالاترین اولویت (group=-1)
+    # 1. سیستم خوش‌آمدگویی اعضای جدید
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
+
+    # 2. اختصاصی برای بازی دوز با بالاترین اولویت (group=-1)
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler),
         group=-1
     )
 
-    # 2. هاندر عمومی پیام‌ها
+    # 3. هاندر عمومی پیام‌ها
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_messages)
     )
