@@ -1673,13 +1673,70 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
+
     user_id = update.effective_user.id
-    
+
     if user_id != OWNER_ID:
-        await update.message.reply_text("❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!")
+        await update.message.reply_text(
+            "❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!"
+        )
         return
 
-    await render_owner_panel_message(update.message)
+    db = load_db()
+    user_count = len(db.get("started_users", {}))
+
+    buttons = [
+        [InlineKeyboardButton(
+            "🖼 رسانه لف",
+            callback_data="panel_media_lef",
+            style="primary"
+        )],
+        [InlineKeyboardButton(
+            "⏱ زمان محدودیت (Cooldown)",
+            callback_data="panel_cooldown",
+            style="primary"
+        )],
+        [InlineKeyboardButton(
+            "⚙ مدیریت قابلیت ها",
+            callback_data="panel_features",
+            style="primary"
+        )],
+        [InlineKeyboardButton(
+            "📢 پیام همگانی گروه ها",
+            callback_data="panel_broadcast",
+            style="primary"
+        )],
+        [InlineKeyboardButton(
+            f"📢 پیام همگانی کاربران ({user_count})",
+            callback_data="panel_user_broadcast",
+            style="success"
+        )],
+        [InlineKeyboardButton(
+            "😈 تنظیم فحش ناموسی",
+            callback_data="panel_fun_named",
+            style="danger"
+        )],
+        [InlineKeyboardButton(
+            "😂 تنظیم فحش عادی",
+            callback_data="panel_fun_normal",
+            style="primary"
+        )],
+        [InlineKeyboardButton(
+            "📋 ادمین لاگ",
+            callback_data="panel_admin_logs",
+            style="primary"
+        )]
+    ]
+
+    keyboard = InlineKeyboardMarkup(buttons)
+
+    await update.message.reply_text(
+        "<b>مالک محترم ربات 👑\n\n"
+        "به پنل اصلی مدیریت ربات خوش آمدید. "
+        "گزینه مورد نظر را انتخاب کنید:</b>",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
 
 async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
