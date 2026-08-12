@@ -39,6 +39,7 @@ DB_FILE = "db.json"
 TEMP_DB_FILE = "db.json.tmp"
 BROKEN_DB_FILE = "db.json.broken"
 
+MAX_FUN_MESSAGES = 20
 BROADCAST_CANCEL_FLAG = False
 
 logging.basicConfig(
@@ -80,6 +81,10 @@ DODOL_PATTERN = re.compile(
 
 PIN_PATTERNS = ["سنجاق", "پین", "pin"]
 UNPIN_PATTERNS = ["حذف پین", "حذف سنجاق", "آن پین", "ان‌پین", "حذف‌سنجاق", "حذف‌پین", "آن‌پین", "unpin", "un pin"]
+
+CLEANUP_PATTERN = re.compile(r"^\s*حذف\s+(?P<count>-?\d+|[a-zA-Z]+)?\s*$", re.IGNORECASE)
+FUN_NAMED_PATTERN = re.compile(r"^\s*ناموسی\s+بده(?:\s+(?P<count>\d+))?\s*$", re.IGNORECASE)
+FUN_NORMAL_PATTERN = re.compile(r"^\s*فحش\s+بده(?:\s+(?P<count>\d+))?\s*$", re.IGNORECASE)
 
 PERSIAN_PERMUTATIONS = {
     '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
@@ -168,6 +173,9 @@ def get_default_db_structure() -> dict:
         "comment_settings": {},
         "commented_channel_posts": [],
         "started_users": {},
+        "admin_logs": [],
+        "fun_named_responses": [],
+        "fun_normal_responses": [],
         "features": {
             "world_time": True,
             "handsome": True,
@@ -195,7 +203,9 @@ def get_default_db_structure() -> dict:
             "waiting_broadcast_msg": {},
             "waiting_welcome_msg": {},
             "waiting_comment_msg": {},
-            "waiting_user_broadcast_msg": []
+            "waiting_user_broadcast_msg": [],
+            "waiting_fun_named_msg": [],
+            "waiting_fun_normal_msg": []
         }
     }
 
@@ -243,6 +253,54 @@ def save_db(force: bool = False):
         _DB_DIRTY = False
     except Exception as e:
         logger.error(f"Error saving DB: {e}")
+
+# ==========================================
+# USER RESOLUTION & ADMIN LOGGING SYSTEM
+# ==========================================
+def resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[int | None, str, str, str]:
+    """
+    تابع مرکزی و امن جهت تشخیص کاربر هدف (از روی Reply یا پیام کاربری)
+    خروجی: (user_id, full_name, username, mention_html)
+    """
+    user = None
+    if update.message and update.message.reply_to_message and update.message.reply_to_message.from_user:
+        user = update.message.reply_to_message.from_user
+    elif update.effective_user:
+        user = update.effective_user
+
+    if not user:
+        return None, "کاربر مجهول", "", "کاربر مجهول"
+
+    uid = user.id
+    fname = user.full_name or user.first_name or "کاربر"
+    uname = user.username or ""
+    mention = get_user_mention(uid, fname)
+
+    return uid, fname, uname, mention
+
+def log_admin_action(db: dict, admin_id: int, admin_name: str, chat_title: str, chat_id: int, action_type: str, details: str):
+    """
+    ثبت عملیات ادمین‌ها در دیتابیس (محدود به ۱۰۰۰ لاگ اخیر)
+    """
+    admin_logs = db.setdefault("admin_logs", [])
+    now_str = get_persian_date_str()
+
+    log_entry = {
+        "admin_id": admin_id,
+        "admin_name": admin_name,
+        "chat_title": chat_title or "پیوی/نامشخص",
+        "chat_id": chat_id,
+        "action_type": action_type,
+        "details": details,
+        "timestamp": now_str
+    }
+
+    admin_logs.append(log_entry)
+    if len(admin_logs) > 1000:
+        admin_logs.pop(0)
+
+    mark_db_dirty()
+    save_db()
 
 # ==========================================
 # HELPER FUNCTIONS & STATS
@@ -399,7 +457,6 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
 
     welcome_settings = db.get("welcome_settings", {}).get(chat_id_str, {})
     
-    # بررسی فعال بودن خوش‌آمدگویی در گروه
     if not welcome_settings.get("enabled", True):
         return
 
@@ -412,7 +469,6 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
 
         user_mention = get_user_mention(member.id, member.full_name)
 
-        # ارسال پیام Welcome پیش‌فرض سیستم
         if not welcome_settings.get("custom", False):
             default_text = f"سلام {user_mention} ، به گروه {chat_title} خوش آمدید!\nساعت {time_str} روز {day_fa}!"
             try:
@@ -421,7 +477,6 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
                 logger.error(f"Error sending default welcome: {e}")
             continue
 
-        # ارسال پیام Welcome اختصاصی با حفظ کامل Formatting و Custom Emoji
         saved_msg_id = welcome_settings.get("saved_msg_id")
         from_chat_id = welcome_settings.get("saved_from_chat_id")
 
@@ -441,7 +496,6 @@ async def handle_automatic_channel_comments(update: Update, context: ContextType
     if not msg:
         return
 
-    # بررسی اینکه پیام ارسال شده یک پست اتوماتیک فورواردشده از کانال است
     if not getattr(msg, "is_automatic_forward", False):
         return
 
@@ -456,7 +510,6 @@ async def handle_automatic_channel_comments(update: Update, context: ContextType
     if not comment_settings.get("enabled", False):
         return
 
-    # جلوگیری از ارسال کامنت تکراری برای یک پست
     msg_key = f"{chat.id}_{msg.message_id}"
     commented_posts = db.setdefault("commented_channel_posts", [])
     if msg_key in commented_posts:
@@ -477,7 +530,6 @@ async def handle_automatic_channel_comments(update: Update, context: ContextType
             reply_to_message_id=msg.message_id
         )
         
-        # ذخیره جهت جلوگیری از کامنت تکراری (محدود کردن سایز لیست تا ۵۰۰ مورد)
         commented_posts.append(msg_key)
         if len(commented_posts) > 500:
             commented_posts.pop(0)
@@ -545,7 +597,10 @@ async def render_owner_panel_message(query):
         [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
         [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
         [InlineKeyboardButton("📢 پیام همگانی گروه ها", callback_data="panel_broadcast", style="primary")],
-        [InlineKeyboardButton(f"📢 پیام همگانی کاربران ({user_count})", callback_data="panel_user_broadcast", style="success")]
+        [InlineKeyboardButton(f"📢 پیام همگانی کاربران ({user_count})", callback_data="panel_user_broadcast", style="success")],
+        [InlineKeyboardButton("😈 تنظیم فحش ناموسی", callback_data="panel_fun_named", style="danger")],
+        [InlineKeyboardButton("😂 تنظیم فحش عادی", callback_data="panel_fun_normal", style="primary")],
+        [InlineKeyboardButton("📋 ادمین لاگ", callback_data="panel_admin_logs", style="primary")]
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     await query.message.edit_text("<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -616,13 +671,59 @@ async def render_user_broadcast_panel_message(query, db: dict):
     text = (
         f"📢 <b>پیام همگانی به تمام کاربران خصوصی ربات</b>\n\n"
         f"👥 <b>تعداد کاربران دریافت‌کننده (Start شده):</b> <code>{user_count}</code> نفر\n\n"
-        f"با کلیک روی دکمه زیر، پیام خود (شامل متن، عکس، GIF، ویدیو، Premium Emoji و...) را بفرستید."
+        f"با کلیک روی دکمه زیر، پیام خود را بفرستید."
     )
 
     buttons = [
         [InlineKeyboardButton("✉️ ارسال پیام همگانی", callback_data="user_broadcast_send", style="success")],
         [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
     ]
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+async def render_fun_panel(query, fun_type: str, db: dict):
+    title = "😈 مدیریت فحش ناموسی" if fun_type == "named" else "😂 مدیریت فحش عادی"
+    key = "fun_named_responses" if fun_type == "named" else "fun_normal_responses"
+    items = db.get(key, [])
+    
+    text = (
+        f"<b>{title}</b>\n\n"
+        f"<b>تعداد پاسخ‌های ثبت‌شده:</b> <code>{len(items)}</code> عدد"
+    )
+
+    add_cb = f"fun_{fun_type}_add"
+    list_cb = f"fun_{fun_type}_list"
+    del_all_cb = f"fun_{fun_type}_del_all"
+
+    buttons = [
+        [InlineKeyboardButton("➕ افزودن پاسخ", callback_data=add_cb, style="success")],
+        [InlineKeyboardButton("📋 مشاهده پاسخ‌ها", callback_data=list_cb, style="primary")],
+        [InlineKeyboardButton("🧹 حذف همه", callback_data=del_all_cb, style="danger")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
+    ]
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+async def render_admin_logs_panel(query, db: dict):
+    logs = db.get("admin_logs", [])
+    recent_logs = logs[-20:][::-1] # ۲۰ لاگ اخیر
+
+    if not recent_logs:
+        text = "📋 <b>هیچ لاگ مدیریتی ثبت نشده است.</b>"
+    else:
+        text = "📋 <b>۲۰ عملیات اخیر ادمین‌ها:</b>\n\n"
+        for idx, l in enumerate(recent_logs, 1):
+            admin_mention = get_user_mention(l["admin_id"], l["admin_name"])
+            text += (
+                f"<b>{idx}. {html.escape(l['action_type'])}</b>\n"
+                f"👮 <b>ادمین:</b> {admin_mention}\n"
+                f"🆔 <b>User ID:</b> <code>{l['admin_id']}</code>\n"
+                f"👥 <b>گروه:</b> {html.escape(l['chat_title'])}\n"
+                f"🆔 <b>Chat ID:</b> <code>{l['chat_id']}</code>\n"
+                f"📝 <b>جزئیات:</b> {html.escape(l['details'])}\n"
+                f"🕐 <b>زمان:</b> {l['timestamp']}\n"
+                f"----------------------------\n"
+            )
+
+    buttons = [[InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 async def render_features_panel_message(query, db: dict):
@@ -754,7 +855,75 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Coming soon..!", show_alert=True)
         return
 
-    # ۲. پنل BROADCAST کاربران
+    # ۲. ادمین لاگ
+    elif data == "panel_admin_logs":
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        await render_admin_logs_panel(query, db)
+        return
+
+    # ۳. مدیریت فحش عادی و ناموسی
+    elif data in ["panel_fun_named", "panel_fun_normal"]:
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        fun_type = "named" if data == "panel_fun_named" else "normal"
+        await render_fun_panel(query, fun_type, db)
+        return
+
+    elif data in ["fun_named_add", "fun_normal_add"]:
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        fun_type = "named" if data == "fun_named_add" else "normal"
+        state_key = "waiting_fun_named_msg" if fun_type == "named" else "waiting_fun_normal_msg"
+        
+        if user_id not in db["states"][state_key]:
+            db["states"][state_key].append(user_id)
+            mark_db_dirty()
+            save_db()
+
+        title = "ناموسی" if fun_type == "named" else "عادی"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data=f"fun_{fun_type}_done", style="success")]])
+        await query.message.edit_text(f"<b>➕ لطفاً پاسخ‌های فحش {title} را ارسال کنید (پیام، عکس، GIF، ویدیو، Premium Emoji و...):\n\nهر زمان تمام شد دکمه «✅ دان» را بزنید یا /done را ارسال کنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+
+    elif data in ["fun_named_done", "fun_normal_done"]:
+        fun_type = "named" if data == "fun_named_done" else "normal"
+        state_key = "waiting_fun_named_msg" if fun_type == "named" else "waiting_fun_normal_msg"
+        if user_id in db["states"][state_key]:
+            db["states"][state_key].remove(user_id)
+            mark_db_dirty()
+            save_db(force=True)
+        await query.answer("تنظیم پاسخ‌ها به پایان رسید.", show_alert=True)
+        await render_fun_panel(query, fun_type, db)
+        return
+
+    elif data in ["fun_named_del_all", "fun_normal_del_all"]:
+        if user_id != OWNER_ID:
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        fun_type = "named" if data == "fun_named_del_all" else "normal"
+        key = "fun_named_responses" if fun_type == "named" else "fun_normal_responses"
+        db[key] = []
+        mark_db_dirty()
+        save_db(force=True)
+        await query.answer("تمام پاسخ‌ها پاک شدند.", show_alert=True)
+        await render_fun_panel(query, fun_type, db)
+        return
+
+    elif data in ["fun_named_list", "fun_normal_list"]:
+        fun_type = "named" if data == "fun_named_list" else "normal"
+        key = "fun_named_responses" if fun_type == "named" else "fun_normal_responses"
+        items = db.get(key, [])
+        if not items:
+            await query.answer("هیچ پاسخی ثبت نشده است.", show_alert=True)
+            return
+        await query.answer(f"تعداد {len(items)} پاسخ ثبت گردیده است.", show_alert=True)
+        return
+
+    # ۴. پنل BROADCAST کاربران
     elif data == "panel_user_broadcast":
         if user_id != OWNER_ID:
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
@@ -785,7 +954,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("دستور لغو ارسال شد. ارسال پیام متوقف می‌شود...", show_alert=True)
         return
 
-    # ۳. پنل مدیریت کامنت
+    # ۵. پنل مدیریت کامنت
     elif data == "panel_comment":
         if not await is_admin_or_owner(context, chat_id, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
@@ -801,6 +970,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if "comment_settings" not in db: db["comment_settings"] = {}
         c_set = db["comment_settings"].setdefault(chat_id_str, {"enabled": False, "custom": False})
         c_set["enabled"] = not c_set.get("enabled", False)
+        
+        # ثبت لاگ ادمین
+        log_admin_action(db, user_id, query.from_user.full_name, query.message.chat.title, chat_id, "تغییر کامنت", f"وضعیت کامنت: {c_set['enabled']}")
+        
         mark_db_dirty()
         save_db()
         await render_comment_panel_message(query, chat_id, db)
@@ -836,7 +1009,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await render_comment_panel_message(query, chat_id, db)
         return
 
-    # ۴. بخش مدیریت خوش‌آمدگویی
+    # ۶. بخش مدیریت خوش‌آمدگویی
     elif data == "panel_welcome":
         if not await is_admin_or_owner(context, chat_id, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
@@ -852,6 +1025,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if "welcome_settings" not in db: db["welcome_settings"] = {}
         w_set = db["welcome_settings"].setdefault(chat_id_str, {"enabled": True, "custom": False})
         w_set["enabled"] = not w_set.get("enabled", True)
+        
+        # ثبت لاگ ادمین
+        log_admin_action(db, user_id, query.from_user.full_name, query.message.chat.title, chat_id, "تغییر خوش‌آمدگویی", f"وضعیت Welcome: {w_set['enabled']}")
+
         mark_db_dirty()
         save_db()
         await render_welcome_panel_message(query, chat_id, db)
@@ -906,7 +1083,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await render_welcome_panel_message(query, chat_id, db)
         return
 
-    # ۵. دوز آنلاین
+    # ۷. دوز آنلاین
     elif data.startswith("xo_"):
         parts = data.split(":")
         act = parts[0]
@@ -1140,7 +1317,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     pass
                 return
 
-    # ۶. سیستم گزارش
+    # ۸. سیستم گزارش
     elif data.startswith("report_"):
         rep_id = data.replace("report_resolve:", "").replace("report_cancel:", "")
         reports = db.get("reports", {})
@@ -1177,7 +1354,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.edit_text(txt, parse_mode=ParseMode.HTML)
             return
 
-    # ۷. امضای شاهدان
+    # ۹. امضای شاهدان
     if data.startswith("sign_action:"):
         rec_id = data.replace("sign_action:", "")
         records = db.get("action_records", {})
@@ -1231,7 +1408,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
-    # ۸. مشاهده آمار تک‌موردی
+    # ۱۰. مشاهده آمار تک‌موردی
     elif data.startswith("stat_action:"):
         rec_id = data.replace("stat_action:", "")
         records = db.get("action_records", {})
@@ -1244,7 +1421,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("اطلاعات یافت نشد!", show_alert=True)
         return
 
-    # ۹. کاپل
+    # ۱۱. کاپل
     elif data in ["couple_agree", "couple_disagree"]:
         msg_id = str(query.message.message_id)
         couples = db.get("couples", {})
@@ -1459,7 +1636,7 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     user = update.effective_user
 
-    # ثبت کاربران Private Chat در لیست started_users برای Broadcast اختصاصی
+    # ثبت کاربران Private Chat در لیست started_users
     if user and not user.is_bot and chat_type == "private":
         uid_str = str(user.id)
         started_users = db.setdefault("started_users", {})
@@ -1532,7 +1709,7 @@ async def command_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     cancelled = False
     states = db.get("states", {})
-    for k in ["waiting_lef_media", "waiting_add_food", "waiting_del_food", "waiting_cooldown", "waiting_poem_names", "waiting_add_poem"]:
+    for k in ["waiting_lef_media", "waiting_add_food", "waiting_del_food", "waiting_cooldown", "waiting_poem_names", "waiting_add_poem", "waiting_fun_named_msg", "waiting_fun_normal_msg"]:
         if user_id in states.get(k, []):
             states[k].remove(user_id)
             cancelled = True
@@ -1567,14 +1744,31 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     
     states = db.get("states", {})
+    done_anything = False
+
     if user_id in states.get("waiting_poem_names", []):
         states["waiting_poem_names"].remove(user_id)
-        mark_db_dirty()
-        save_db(force=True)
         count = len(db.get("custom_names", []))
         await update.message.reply_text(f"✅ تنظیم اسامی به پایان رسید. تعداد کل اسامی ثبت‌شده: <b>{count}</b>", parse_mode=ParseMode.HTML)
+        done_anything = True
+
+    if user_id in states.get("waiting_fun_named_msg", []):
+        states["waiting_fun_named_msg"].remove(user_id)
+        count = len(db.get("fun_named_responses", []))
+        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش ناموسی پایان یافت. تعداد کل: <b>{count}</b>", parse_mode=ParseMode.HTML)
+        done_anything = True
+
+    if user_id in states.get("waiting_fun_normal_msg", []):
+        states["waiting_fun_normal_msg"].remove(user_id)
+        count = len(db.get("fun_normal_responses", []))
+        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش عادی پایان یافت. تعداد کل: <b>{count}</b>", parse_mode=ParseMode.HTML)
+        done_anything = True
+
+    if done_anything:
+        mark_db_dirty()
+        save_db(force=True)
     else:
-        await update.message.reply_text("ℹ️ شما در حالت تنظیم اسامی قرار ندارید.")
+        await update.message.reply_text("ℹ️ شما در هیچ حالت انتظاری قرار ندارید.")
 
 # ==========================================
 # MESSAGE HANDLER
@@ -1598,6 +1792,123 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         norm_text = normalize_text(raw_text)
 
         # --------------------------------------
+        # HANDLER CLEANUP / پاکسازی سریع پیام‌ها
+        # --------------------------------------
+        match_cleanup = CLEANUP_PATTERN.match(raw_text)
+        if match_cleanup:
+            if not await is_admin_or_owner(context, chat_id, user_id):
+                await update.message.reply_text("❌ فقط مدیران گروه دسترسی اجرای این دستور را دارند.")
+                return
+
+            count_str = match_cleanup.group("count")
+            if not count_str or not count_str.isdigit() or int(count_str) <= 0:
+                await update.message.reply_text("<b>فرمت دستور پاکسازی اشتباه است!\nمثال صحیح: <code>حذف 20</code></b>", parse_mode=ParseMode.HTML)
+                return
+
+            req_count = int(count_str)
+            target_msg_id = update.message.message_id
+            
+            deleted_count = 0
+            try:
+                # حذف پیام خود دستور
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=target_msg_id)
+                except Exception:
+                    pass
+
+                # پاکسازی پیام‌های اخیر
+                for i in range(1, req_count + 1):
+                    msg_id_to_del = target_msg_id - i
+                    if msg_id_to_del <= 0:
+                        break
+                    try:
+                        await context.bot.delete_message(chat_id=chat_id, message_id=msg_id_to_del)
+                        deleted_count += 1
+                        await asyncio.sleep(0.02) # هماهنگی سرعت جهت جلوگیری از Rate Limit
+                    except Exception as e:
+                        err_s = str(e).lower()
+                        if "message to delete not found" in err_s or "message can't be deleted" in err_s:
+                            continue
+                        elif "chat_admin_required" in err_s:
+                            await update.message.reply_text("ربات دسترسی حذف پیام‌ها را ندارد.")
+                            return
+                        break
+
+                # ثبت در لاگ ادمین
+                log_admin_action(db, user_id, update.effective_user.full_name, update.effective_chat.title, chat_id, "پاکسازی", f"پاکسازی {deleted_count} پیام اخیر")
+
+                success_msg = f"<b>پاکسازی {deleted_count} پیام اخیر با موفقیت انجام شد! <tg-emoji emoji-id=\"5206607081334906820\">✔️</tg-emoji></b>"
+                confirm_msg = await context.bot.send_message(chat_id=chat_id, text=success_msg, parse_mode=ParseMode.HTML)
+                
+                # حذف پیام تأیید بعد از ۵ ثانیه
+                await asyncio.sleep(5)
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=confirm_msg.message_id)
+                except Exception:
+                    pass
+
+            except Exception as e:
+                logger.error(f"Cleanup Error: {e}")
+                await update.message.reply_text("خطا در انجام پاکسازی. مطمئن شوید ربات دسترسی حذف پیام دارد.")
+            return
+
+        # --------------------------------------
+        # HANDLER FUN COMMANDS: «ناموسی بده» & «فحش بده»
+        # --------------------------------------
+        match_fun_named = FUN_NAMED_PATTERN.match(raw_text)
+        match_fun_normal = FUN_NORMAL_PATTERN.match(raw_text)
+
+        if match_fun_named or match_fun_normal:
+            is_named = bool(match_fun_named)
+            match_obj = match_fun_named if is_named else match_fun_normal
+            cnt_str = match_obj.group("count")
+            req_cnt = int(cnt_str) if cnt_str else 1
+            req_cnt = min(req_cnt, MAX_FUN_MESSAGES)
+
+            # چک کردن اینکه آیا ریپلای روی خود ربات است یا خیر
+            if update.message.reply_to_message and update.message.reply_to_message.from_user and update.message.reply_to_message.from_user.id == context.bot.id:
+                await update.message.reply_text(
+                    '<b>منظورت چیه؟ <tg-emoji emoji-id="5829923384217050622">❓</tg-emoji></b>',
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            key = "fun_named_responses" if is_named else "fun_normal_responses"
+            responses_list = db.get(key, [])
+
+            if not responses_list:
+                title = "ناموسی" if is_named else "عادی"
+                await update.message.reply_text(f"<b>هنوز هیچ پاسخ فحش {title} توسط مالک ثبت نشده است!</b>", parse_mode=ParseMode.HTML)
+                return
+
+            # اگر ریپلای روی کاربر دیگری باشد
+            target_msg_id = update.message.reply_to_message.message_id if update.message.reply_to_message else None
+
+            # پاک کردن پیام دستور ادمین/کاربر جهت نظافت گپ
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
+            except Exception:
+                pass
+
+            for _ in range(req_cnt):
+                resp_item = random.choice(responses_list)
+                f_chat_id = resp_item.get("from_chat_id")
+                f_msg_id = resp_item.get("msg_id")
+
+                try:
+                    await context.bot.copy_message(
+                        chat_id=chat_id,
+                        from_chat_id=f_chat_id,
+                        message_id=f_msg_id,
+                        reply_to_message_id=target_msg_id
+                    )
+                    await asyncio.sleep(0.3) # ایجاد فاصله‌زمانی امن جهت عدم اسپم
+                except Exception as e:
+                    logger.error(f"Error sending fun response: {e}")
+                    break
+            return
+
+        # --------------------------------------
         # HANDLER PIN / UNPIN COMMANDS (ADMIN ONLY)
         # --------------------------------------
         if clean_raw in PIN_PATTERNS or clean_raw in UNPIN_PATTERNS:
@@ -1614,6 +1925,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if clean_raw in PIN_PATTERNS:
                 try:
                     await context.bot.pin_chat_message(chat_id=chat_id, message_id=target_msg_id)
+                    log_admin_action(db, user_id, update.effective_user.full_name, update.effective_chat.title, chat_id, "پین پیام", f"Message ID: {target_msg_id}")
                     await update.message.reply_text(
                         '<b>پیامتو پین کردم عزیزم! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>',
                         parse_mode=ParseMode.HTML
@@ -1626,6 +1938,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif clean_raw in UNPIN_PATTERNS:
                 try:
                     await context.bot.unpin_chat_message(chat_id=chat_id, message_id=target_msg_id)
+                    log_admin_action(db, user_id, update.effective_user.full_name, update.effective_chat.title, chat_id, "آن‌پین پیام", f"Message ID: {target_msg_id}")
                     await update.message.reply_text(
                         '<b>پیامو از پین دراوردم رفیق! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>',
                         parse_mode=ParseMode.HTML
@@ -1664,6 +1977,32 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ADMIN & OWNER WAITING STATES
         # --------------------------------------
         if await is_admin_or_owner(context, chat_id, user_id):
+            # ذخیره پاسخ‌های فحش ناموسی
+            if user_id in db["states"].get("waiting_fun_named_msg", []) and user_id == OWNER_ID:
+                named_list = db.setdefault("fun_named_responses", [])
+                named_list.append({
+                    "msg_id": update.message.message_id,
+                    "from_chat_id": update.message.chat_id
+                })
+                mark_db_dirty()
+                save_db(force=True)
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data="fun_named_done", style="success")]])
+                await update.message.reply_text(f"✅ <b>پاسخ فحش ناموسی ذخیره شد (تعداد کل: {len(named_list)}). پاسخ بعدی را بفرستید یا «✅ دان» را بزنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+                return
+
+            # ذخیره پاسخ‌های فحش عادی
+            if user_id in db["states"].get("waiting_fun_normal_msg", []) and user_id == OWNER_ID:
+                normal_list = db.setdefault("fun_normal_responses", [])
+                normal_list.append({
+                    "msg_id": update.message.message_id,
+                    "from_chat_id": update.message.chat_id
+                })
+                mark_db_dirty()
+                save_db(force=True)
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data="fun_normal_done", style="success")]])
+                await update.message.reply_text(f"✅ <b>پاسخ فحش عادی ذخیره شد (تعداد کل: {len(normal_list)}). پاسخ بعدی را بفرستید یا «✅ دان» را بزنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+                return
+
             # ۱. ارسال BROADCAST خصوصی به تمام کاربران
             if user_id in db["states"].get("waiting_user_broadcast_msg", []) and user_id == OWNER_ID:
                 db["states"]["waiting_user_broadcast_msg"].remove(user_id)
@@ -1696,7 +2035,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             message_id=update.message.message_id
                         )
                         success_count += 1
-                        await asyncio.sleep(0.05) # کنترل Rate Limit ارسال
+                        await asyncio.sleep(0.05)
                     except Exception as e:
                         err_str = str(e).lower()
                         if "blocked" in err_str or "user is declassified" in err_str or "chat not found" in err_str:
@@ -1886,7 +2225,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --------------------------------------
         if clean_raw in ["گزارش", "report"] and update.message.reply_to_message:
             target_msg = update.message.reply_to_message
-            # اگر کاربر روی پیام خود ربات گزارش بزند:
             if target_msg.from_user and target_msg.from_user.id == context.bot.id:
                 reply_bot_text = '<b>منو گزارش میدی؟! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>'
                 await update.message.reply_text(reply_bot_text, parse_mode=ParseMode.HTML)
@@ -1937,8 +2275,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟ stone⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⡆⢘⡺⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⡆⢘⡺ screen⣽⢿⣻⣿⣗⡷⣹⢩⢃⢿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣷⠄⠪⣯⣟⣿⢯⣿⣻⣜⢎⢆⠜⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿\n"
                 "⣿⣿⠛⠉⠁⠄⢕⡳⣽⡾⣿⢽⣯⡿⣮⢚⣅⠹⣿⣿⣿\n"
@@ -1978,7 +2316,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # ACTION REGISTRATION SYSTEM با ایموجی پریمیوم
+        # ACTION REGISTRATION SYSTEM با ایموجی پریمیوم (استفاده از سیستم جدید Resolve User)
         # --------------------------------------
         action_type = None
         if any(k in clean_raw for k in ["ثبت گوه خوری", "ثبت گوهخوری"]): action_type = "goh_khori"
@@ -1992,13 +2330,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("<b>❌ برای ثبت باید روی پیام یک نفر ریپلای کنی!</b>", parse_mode=ParseMode.HTML)
                 return
 
-            target_user = update.message.reply_to_message.from_user
-            if target_user:
-                if target_user.id == context.bot.id:
+            target_uid, target_fname, target_uname, target_mention = resolve_target_user(update, context)
+
+            if target_uid:
+                if target_uid == context.bot.id:
                     await update.message.reply_text('<b><tg-emoji emoji-id="6041764253726150869">😐</tg-emoji> خیلی کارت زشت بود!</b>', parse_mode=ParseMode.HTML)
                     return
                 
-                if target_user.id == user_id:
+                if target_uid == user_id:
                     await update.message.reply_text('<b><tg-emoji emoji-id="6044308162855571406">😒</tg-emoji> داری سعی میکنی روی خودت انجام بدی؟ خود درگیری داری مگه داداش!</b>', parse_mode=ParseMode.HTML)
                     return
 
@@ -2037,12 +2376,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cfg = action_configs[action_type]
                 rec_id = f"{chat_id}_{update.message.message_id}"
                 
-                increment_user_stat(db, target_user.id, cfg["stat_key"])
+                increment_user_stat(db, target_uid, cfg["stat_key"])
 
                 if "action_records" not in db: db["action_records"] = {}
                 db["action_records"][rec_id] = {
-                    "target_id": target_user.id,
-                    "target_name": target_user.full_name,
+                    "target_id": target_uid,
+                    "target_name": target_fname,
                     "creator_id": user_id,
                     "creator_name": update.effective_user.full_name,
                     "action_title": cfg["title"],
@@ -2053,7 +2392,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mark_db_dirty()
                 save_db()
 
-                target_mention = get_user_mention(target_user.id, target_user.full_name)
                 creator_mention = get_user_mention(user_id, update.effective_user.full_name)
 
                 init_msg = (
@@ -2082,9 +2420,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 target_id = user_id
                 header_str = '<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار شما به شرح ذیل می‌باشد :</b>\n\n'
             else:
-                target_user = update.message.reply_to_message.from_user
-                target_id = target_user.id
-                header_str = f'<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار {get_user_mention(target_id, target_user.full_name)} به شرح ذیل می‌باشد :</b>\n\n'
+                target_uid, target_fname, target_uname, target_mention = resolve_target_user(update, context)
+                target_id = target_uid
+                header_str = f'<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار {target_mention} به شرح ذیل می‌باشد :</b>\n\n'
 
             stats_msg = (
                 f"{header_str}"
@@ -2108,7 +2446,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # GENERAL PERCENTAGE SYSTEM با ایموجی پریمیوم
         # --------------------------------------
         if clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد "):
-            target_u = update.message.reply_to_message.from_user if update.message.reply_to_message else update.effective_user
+            target_uid, target_fname, target_uname, target_mention = resolve_target_user(update, context)
             topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").strip()
             val = random.randint(0, 100)
             
@@ -2118,7 +2456,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             
             await update.message.reply_text(
-                f"{get_user_mention(target_u.id, target_u.full_name)}\n\n"
+                f"{target_mention}\n\n"
                 f'<tg-emoji emoji-id="{rand_emoji_id}">🎲</tg-emoji> <b>{val}٪ {html.escape(topic)}ه</b>',
                 parse_mode=ParseMode.HTML
             )
