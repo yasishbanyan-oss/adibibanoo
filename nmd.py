@@ -423,19 +423,19 @@ async def post_init(application: Application):
 # ==========================================
 async def render_owner_panel_message(query):
     buttons = [
-        [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef", style="primary")],
-        [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
-        [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
-        [InlineKeyboardButton("📢 پیام همگانی", callback_data="panel_broadcast", style="primary")]
+        [InlineKeyboardButton("رسانه لف", callback_data="panel_media_lef", style="primary")],
+        [InlineKeyboardButton("زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
+        [InlineKeyboardButton("مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
+        [InlineKeyboardButton("پیام همگانی", callback_data="panel_broadcast", style="primary")]
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     await query.message.edit_text("<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 async def render_group_admin_panel_message(query):
     buttons = [
-        [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods", style="primary")],
-        [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names", style="primary")],
-        [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")]
+        [InlineKeyboardButton("مدیریت غذاها", callback_data="panel_foods", style="primary")],
+        [InlineKeyboardButton("اسامی شعرها", callback_data="panel_poem_names", style="primary")],
+        [InlineKeyboardButton("افزودن شعر جدید", callback_data="panel_add_poem", style="success")]
     ]
     keyboard = InlineKeyboardMarkup(buttons)
     await query.message.edit_text("<b>مدیر محترم گروه 🔰\n\nجهت تنظیمات اختصاصی گروه گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -446,20 +446,20 @@ async def render_features_panel_message(query, db: dict):
         return "✅" if feats.get(key, True) else "❌"
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"{status('world_time')} 🌍 ساعت جهانی", callback_data="toggle_world_time", style="primary")],
-        [InlineKeyboardButton(f"{status('handsome')} 😎 خوشتیپ", callback_data="toggle_handsome", style="primary")],
-        [InlineKeyboardButton(f"{status('jende')} 😂 جنده", callback_data="toggle_jende", style="primary")],
-        [InlineKeyboardButton(f"{status('koni')} 🤣 کونی", callback_data="toggle_koni", style="primary")],
-        [InlineKeyboardButton(f"{status('jaghi')} 🍌 جقی", callback_data="toggle_jaghi", style="primary")],
-        [InlineKeyboardButton(f"{status('koskhal')} 🤪 کصخل", callback_data="toggle_koskhal", style="primary")],
-        [InlineKeyboardButton(f"{status('sexy')} 😈 سکسی", callback_data="toggle_sexy", style="primary")],
-        [InlineKeyboardButton(f"{status('jazab')} ☕️ جذاب", callback_data="toggle_jazab", style="primary")],
-        [InlineKeyboardButton(f"{status('ship')} ❤️ شیپ", callback_data="toggle_ship", style="primary")],
-        [InlineKeyboardButton(f"{status('food')} 🍽 غذا", callback_data="toggle_food", style="primary")],
-        [InlineKeyboardButton(f"{status('lef')} 🖼 لف", callback_data="toggle_lef", style="primary")],
-        [InlineKeyboardButton(f"{status('goh_khor')} 🏆 گوه خور", callback_data="toggle_goh_khor", style="primary")],
-        [InlineKeyboardButton(f"{status('koni_percent')} 📊 درصد", callback_data="toggle_koni_percent", style="primary")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
+        [InlineKeyboardButton(f"{status('world_time')} ساعت جهانی", callback_data="toggle_world_time", style="primary")],
+        [InlineKeyboardButton(f"{status('handsome')} خوشتیپ", callback_data="toggle_handsome", style="primary")],
+        [InlineKeyboardButton(f"{status('jende')} جنده", callback_data="toggle_jende", style="primary")],
+        [InlineKeyboardButton(f"{status('koni')} کونی", callback_data="toggle_koni", style="primary")],
+        [InlineKeyboardButton(f"{status('jaghi')} جقی", callback_data="toggle_jaghi", style="primary")],
+        [InlineKeyboardButton(f"{status('koskhal')} کصخل", callback_data="toggle_koskhal", style="primary")],
+        [InlineKeyboardButton(f"{status('sexy')} سکسی", callback_data="toggle_sexy", style="primary")],
+        [InlineKeyboardButton(f"{status('jazab')} جذاب", callback_data="toggle_jazab", style="primary")],
+        [InlineKeyboardButton(f"{status('ship')} شیپ", callback_data="toggle_ship", style="primary")],
+        [InlineKeyboardButton(f"{status('food')} غذا", callback_data="toggle_food", style="primary")],
+        [InlineKeyboardButton(f"{status('lef')} لف", callback_data="toggle_lef", style="primary")],
+        [InlineKeyboardButton(f"{status('goh_khor')} گوه خور", callback_data="toggle_goh_khor", style="primary")],
+        [InlineKeyboardButton(f"{status('koni_percent')} درصد", callback_data="toggle_koni_percent", style="primary")],
+        [InlineKeyboardButton("بازگشت", callback_data="panel_owner_main", style="primary")]
     ])
     await query.message.edit_text("⚙ <b>مدیریت قابلیت‌ها</b>\n\nبا کلیک روی هر دکمه، وضعیت آن را روشن یا خاموش کنید:", reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
@@ -479,20 +479,22 @@ def check_xo_winner(board):
 
 def build_xo_keyboard(game_id: str, board: list, is_finished: bool = False) -> InlineKeyboardMarkup:
     buttons = []
-    empty_emoji = "🤖"
-    o_emoji = "⭕️"
-    x_emoji = "❌"
     
-    symbols = {None: empty_emoji, "X": x_emoji, "O": o_emoji}
     for i in range(0, 9, 3):
         row = []
         for j in range(i, i + 3):
-            val = symbols.get(board[j], empty_emoji)
-            row.append(InlineKeyboardButton(val, callback_data=f"xo_move:{game_id}:{j}"))
+            cell = board[j]
+            if cell == "O":
+                btn = InlineKeyboardButton("O", callback_data=f"xo_move:{game_id}:{j}", icon_custom_emoji_id="5857031396723269245")
+            elif cell == "X":
+                btn = InlineKeyboardButton("X", callback_data=f"xo_move:{game_id}:{j}", icon_custom_emoji_id="5857415006022278161")
+            else:
+                btn = InlineKeyboardButton(" ", callback_data=f"xo_move:{game_id}:{j}", icon_custom_emoji_id="5911319564301376749")
+            row.append(btn)
         buttons.append(row)
     
     if not is_finished:
-        buttons.append([InlineKeyboardButton("🏴 تسلیم", callback_data=f"xo_surrender:{game_id}", style="danger")])
+        buttons.append([InlineKeyboardButton("تسلیم", callback_data=f"xo_surrender:{game_id}", style="danger", icon_custom_emoji_id="5839270298205035832")])
     return InlineKeyboardMarkup(buttons)
 
 # ==========================================
@@ -528,8 +530,8 @@ async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎮 شرکت", callback_data=f"xo_join:{game_id}", style="success")],
-            [InlineKeyboardButton("🚫 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+            [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success", icon_custom_emoji_id="5889002570633977838")],
+            [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger", icon_custom_emoji_id="5848202125078699135")]
         ])
         
         await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -616,8 +618,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎮 شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("❌ انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
-                    [InlineKeyboardButton("🚫 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success", icon_custom_emoji_id="5889002570633977838"), InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger", icon_custom_emoji_id="5888594273862950655")],
+                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger", icon_custom_emoji_id="5848202125078699135")]
                 ])
             else:
                 txt = (
@@ -626,8 +628,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎮 شرکت", callback_data=f"xo_join:{game_id}", style="success")],
-                    [InlineKeyboardButton("🚫 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success", icon_custom_emoji_id="5889002570633977838")],
+                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger", icon_custom_emoji_id="5848202125078699135")]
                 ])
 
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -661,8 +663,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b><tg-emoji emoji-id="5474531397571986677">🚬</tg-emoji> اگر آماده‌اید روی دکمه شروع بازی کلیک کنید تا حال کنیممم!</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔥 شروع بازی", callback_data=f"xo_start:{game_id}", style="success")],
-                    [InlineKeyboardButton("❌ انصراف", callback_data=f"xo_leave:{game_id}", style="danger")]
+                    [InlineKeyboardButton("شروع بازی", callback_data=f"xo_start:{game_id}", style="success", icon_custom_emoji_id="5832397371278892338")],
+                    [InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger", icon_custom_emoji_id="5888594273862950655")]
                 ])
             else:
                 txt = (
@@ -673,8 +675,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎮 شرکت", callback_data=f"xo_join:{game_id}", style="success"), InlineKeyboardButton("❌ انصراف", callback_data=f"xo_leave:{game_id}", style="danger")],
-                    [InlineKeyboardButton("🚫 بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger")]
+                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success", icon_custom_emoji_id="5889002570633977838"), InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger", icon_custom_emoji_id="5888594273862950655")],
+                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger", icon_custom_emoji_id="5848202125078699135")]
                 ])
 
             await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -880,8 +882,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"✍️ امضای شاهدان ({len(rec['signers'])})", callback_data=f"sign_action:{rec_id}", style="success")],
-            [InlineKeyboardButton(f"🧾 آمار کل {rec['action_title']} این کاربر", callback_data=f"stat_action:{rec_id}", style="primary")]
+            [InlineKeyboardButton(f"امضای شاهدان ({len(rec['signers'])})", callback_data=f"sign_action:{rec_id}", style="success", icon_custom_emoji_id="5859527571586161695")],
+            [InlineKeyboardButton(f"آمار کل {rec['action_title']} این کاربر", callback_data=f"stat_action:{rec_id}", style="primary", icon_custom_emoji_id="5888937012253171131")]
         ])
 
         try:
@@ -964,8 +966,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("👍 موافقم", callback_data="couple_agree", style="success"),
-                InlineKeyboardButton("👎 افتضاح", callback_data="couple_disagree", style="danger")
+                InlineKeyboardButton("موافقم", callback_data="couple_agree", style="success", icon_custom_emoji_id="5411228694935012881"),
+                InlineKeyboardButton("افتضاح", callback_data="couple_disagree", style="danger", icon_custom_emoji_id="5411484842489578182")
             ]
         ])
 
@@ -1123,7 +1125,7 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '<b>بعد از اضافه کردن با ارسال دستور راهنما میتونی با من آشنا بشی! <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>'
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🌟 اضافه کردن گودی به گروه", url=f"https://t.me/{bot_info.username}?startgroup=true", style="success")]
+            [InlineKeyboardButton("اضافه کردن گودی به گروه", url=f"https://t.me/{bot_info.username}?startgroup=true", style="success", icon_custom_emoji_id="4956745198521549627")]
         ])
         await update.message.reply_text(start_pv_msg, reply_markup=kb, parse_mode=ParseMode.HTML)
     else:
@@ -1349,12 +1351,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("😁 راهنمای سرگرمی", callback_data="help_fun", style="primary"),
-                    InlineKeyboardButton("😋 راهنمای بی ادبی", callback_data="help_rude", style="primary")
+                    InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun", style="primary", icon_custom_emoji_id="5415940089375106928"),
+                    InlineKeyboardButton("راهنمای بی ادبی", callback_data="help_rude", style="primary", icon_custom_emoji_id="5832633418386513259")
                 ],
                 [
-                    InlineKeyboardButton("📦 راهنمای کاربردی", callback_data="help_useful", style="primary"),
-                    InlineKeyboardButton("⚙️ راهنمای مدیریت ربات", callback_data="help_admin", style="primary")
+                    InlineKeyboardButton("راهنمای کاربردی", callback_data="help_useful", style="primary", icon_custom_emoji_id="5830338333892418460"),
+                    InlineKeyboardButton("راهنمای مدیریت ربات", callback_data="help_admin", style="primary", icon_custom_emoji_id="5803348359972393936")
                 ]
             ])
             await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -1383,8 +1385,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             txt = f'<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> گزارش شما برای مدیران گروه ارسال شد!</b>{admin_mentions}'
             kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("✔️ بررسی شد", callback_data=f"report_resolve:{rep_id}", style="success"),
-                    InlineKeyboardButton("❌ حذف", callback_data=f"report_cancel:{rep_id}", style="danger")
+                    InlineKeyboardButton("بررسی شد", callback_data=f"report_resolve:{rep_id}", style="success", icon_custom_emoji_id="5206607081334906820"),
+                    InlineKeyboardButton("حذف", callback_data=f"report_cancel:{rep_id}", style="danger", icon_custom_emoji_id="5819154526816444042")
                 ]
             ])
             await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -1402,11 +1404,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠇⠠ screen⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢸⢽⣿⣷⣿⣻ memory⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⡄⢨⣻⣽⣿ memory⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡀⡣⣗⣿⣿⣿⣿⣯⡯⡺⣼⠎⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣧⠐⡵⣻⣟⣯⣿⣷⣟⣝⢞⡿⢹⣿⣿⣿⣿⣿⣿\n"
@@ -1536,8 +1538,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✍️ امضای شاهدان (۰)", callback_data=f"sign_action:{rec_id}", style="success")],
-                    [InlineKeyboardButton(f"🧾 آمار کل {cfg['title']} این کاربر", callback_data=f"stat_action:{rec_id}", style="primary")]
+                    [InlineKeyboardButton("امضای شاهدان (۰)", callback_data=f"sign_action:{rec_id}", style="success", icon_custom_emoji_id="5859527571586161695")],
+                    [InlineKeyboardButton(f"آمار کل {cfg['title']} این کاربر", callback_data=f"stat_action:{rec_id}", style="primary", icon_custom_emoji_id="5888937012253171131")]
                 ])
 
                 await update.message.reply_text(init_msg, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -1891,8 +1893,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     kb = InlineKeyboardMarkup([
                         [
-                            InlineKeyboardButton("👍 موافقم", callback_data="couple_agree", style="success"),
-                            InlineKeyboardButton("👎 افتضاح", callback_data="couple_disagree", style="danger")
+                            InlineKeyboardButton("موافقم", callback_data="couple_agree", style="success", icon_custom_emoji_id="5411228694935012881"),
+                            InlineKeyboardButton("افتضاح", callback_data="couple_disagree", style="danger", icon_custom_emoji_id="5411484842489578182")
                         ]
                     ])
 
