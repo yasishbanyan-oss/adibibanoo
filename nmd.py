@@ -34,7 +34,7 @@ from telegram.ext import (
 # CONFIGURATION & LOGGING
 # ==========================================
 BOT_TOKEN = "8618205537:AAFCjx1_PkdC43ezimZgp-z5PAx0JKEmJqI"
-OWNER_ID = 6749949992
+OWNER_ID = int(os.getenv("OWNER_ID", "6749949992"))
 DB_FILE = "db.json"
 TEMP_DB_FILE = "db.json.tmp"
 BROKEN_DB_FILE = "db.json.broken"
@@ -324,7 +324,7 @@ async def is_user_in_chat(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user
         return False
 
 async def is_admin_or_owner(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
-    if user_id == OWNER_ID:
+    if int(user_id) == int(OWNER_ID):
         return True
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
@@ -580,10 +580,10 @@ async def post_init(application: Application):
     setup_chat_jobs(application.job_queue, db.get("active_chats", []))
 
 # ==========================================
-# ADMIN PANEL RENDERING
+# ADMIN PANEL RENDERING & OWNER PANEL LOGIC
 # ==========================================
 def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
-    """جداسازی منطق تولید متن و کیبورد پنل مالک جهت استفاده در پیام جدید یا ویرایش پیام"""
+    """ساخت دقیق متن و کیبورد پنل مدیریت کل ربات"""
     user_count = len(db.get("started_users", {}))
     text = "<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>"
     buttons = [
@@ -598,19 +598,19 @@ def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
     ]
     return text, InlineKeyboardMarkup(buttons)
 
-async def render_owner_panel_message(target):
-    """
-    پشتیبانی از هر دو ورودی CallbackQuery و Message جهت نمایش بدون خطا
-    """
+async def send_owner_panel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تابع اختصاصی ارسال پیام جدید پنل مالک در جواب /panel"""
     db = load_db()
     text, keyboard = get_owner_panel_content(db)
-    
-    if hasattr(target, "edit_text"): # اگر CallbackQuery بود
-        await target.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    elif hasattr(target, "reply_text"): # اگر Message بود
-        await target.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
-# بازطراحی ساختار جدید پنل مدیریت گروه
+async def edit_owner_panel_message(query):
+    """تابع اختصاصی ویرایش پیام پنل مالک برای callback_data="panel_owner_main" """
+    db = load_db()
+    text, keyboard = get_owner_panel_content(db)
+    await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+# بازطراحی پنل مدیریت گروه
 async def render_group_admin_panel_message(query):
     text = (
         "<b>🛠 پنل مدیریت گروه</b>\n\n"
@@ -934,7 +934,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     # ۳. ادمین لاگ
     elif data == "panel_admin_logs":
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         await render_admin_logs_panel(query, db)
@@ -942,7 +942,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     # ۴. مدیریت فحش عادی و ناموسی
     elif data in ["panel_fun_named", "panel_fun_normal"]:
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         fun_type = "named" if data == "panel_fun_named" else "normal"
@@ -950,7 +950,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     elif data in ["fun_named_add", "fun_normal_add"]:
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         fun_type = "named" if data == "fun_named_add" else "normal"
@@ -978,7 +978,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     elif data in ["fun_named_del_all", "fun_normal_del_all"]:
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         fun_type = "named" if data == "fun_named_del_all" else "normal"
@@ -1002,14 +1002,14 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     # ۵. پنل BROADCAST کاربران
     elif data == "panel_user_broadcast":
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         await render_user_broadcast_panel_message(query, db)
         return
 
     elif data == "user_broadcast_send":
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         db["states"]["waiting_user_broadcast_msg"] = [user_id]
@@ -1024,7 +1024,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     elif data == "user_broadcast_cancel":
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         BROADCAST_CANCEL_FLAG = True
@@ -1569,7 +1569,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     elif data == "panel_broadcast":
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش فقط برای مالک اصلی ربات می‌باشد.", show_alert=True)
             return
         
@@ -1591,7 +1591,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     elif data.startswith("bcast_chat:"):
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش فقط برای مالک اصلی ربات می‌باشد.", show_alert=True)
             return
         target_cid = data.replace("bcast_chat:", "")
@@ -1606,10 +1606,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if data == "panel_owner_main":
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
-        await render_owner_panel_message(query)
+        await edit_owner_panel_message(query)
         return
 
     if data == "panel_admin_main":
@@ -1620,7 +1620,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if data == "panel_media_lef":
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         if user_id not in db["states"]["waiting_lef_media"]:
@@ -1658,7 +1658,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             save_db()
         await query.message.edit_text("➖ نام دقیق غذایی که می‌خواهید حذف شود را بنویسید:\n\nبرای لغو /cancel را بزنید.")
     elif data == "panel_cooldown":
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         if user_id not in db["states"]["waiting_cooldown"]:
@@ -1686,12 +1686,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             save_db()
         await query.message.edit_text("➕ لطفاً شعر جدید را بفرستید. می‌تونید از کلمه <code>یوزرنیم</code> یا <code>{name}</code> برای جای‌گذاری اسم استفاده کنید:\nمثال: <code>یوزرنیم خواست منو خراب کنه بردن خرابه کردنش</code>\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
     elif data == "panel_features":
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         await render_features_panel_message(query, db)
     elif data.startswith("toggle_"):
-        if user_id != OWNER_ID:
+        if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         fk = data.replace("toggle_", "")
@@ -1752,14 +1752,20 @@ async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     user_id = update.effective_user.id
+    logger.info(f"/panel received from user_id={user_id}, OWNER_ID={OWNER_ID}")
 
-    if user_id != OWNER_ID:
+    if int(user_id) != int(OWNER_ID):
+        logger.warning(f"Unauthorized /panel attempt by user_id={user_id}")
         await update.message.reply_text(
             "❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!"
         )
         return
 
-    await render_owner_panel_message(update.message)
+    logger.info("OWNER AUTH PASSED - SENDING OWNER PANEL")
+    try:
+        await send_owner_panel_message(update, context)
+    except Exception as e:
+        logger.exception("OWNER PANEL ERROR:")
 
 async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -2060,7 +2066,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ADMIN & OWNER WAITING STATES
         # --------------------------------------
         if await is_admin_or_owner(context, chat_id, user_id):
-            if user_id in db["states"].get("waiting_fun_named_msg", []) and user_id == OWNER_ID:
+            if user_id in db["states"].get("waiting_fun_named_msg", []) and int(user_id) == int(OWNER_ID):
                 named_list = db.setdefault("fun_named_responses", [])
                 named_list.append({
                     "msg_id": update.message.message_id,
@@ -2072,7 +2078,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"✅ <b>پاسخ فحش ناموسی ذخیره شد (تعداد کل: {len(named_list)}). پاسخ بعدی را بفرستید یا «✅ دان» را بزنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
                 return
 
-            if user_id in db["states"].get("waiting_fun_normal_msg", []) and user_id == OWNER_ID:
+            if user_id in db["states"].get("waiting_fun_normal_msg", []) and int(user_id) == int(OWNER_ID):
                 normal_list = db.setdefault("fun_normal_responses", [])
                 normal_list.append({
                     "msg_id": update.message.message_id,
@@ -2084,7 +2090,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"✅ <b>پاسخ فحش عادی ذخیره شد (تعداد کل: {len(normal_list)}). پاسخ بعدی را بفرستید یا «✅ دان» را بزنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
                 return
 
-            if user_id in db["states"].get("waiting_user_broadcast_msg", []) and user_id == OWNER_ID:
+            if user_id in db["states"].get("waiting_user_broadcast_msg", []) and int(user_id) == int(OWNER_ID):
                 db["states"]["waiting_user_broadcast_msg"].remove(user_id)
                 mark_db_dirty()
                 save_db(force=True)
@@ -2173,7 +2179,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("✅ <b>پیام خوش‌آمدگویی اختصاصی این گروه با موفقیت ذخیره شد!</b>", parse_mode=ParseMode.HTML)
                 return
 
-            if user_id in db["states"].get("waiting_broadcast_msg", {}) and user_id == OWNER_ID:
+            if user_id in db["states"].get("waiting_broadcast_msg", {}) and int(user_id) == int(OWNER_ID):
                 target_cid = db["states"]["waiting_broadcast_msg"][user_id]
                 del db["states"]["waiting_broadcast_msg"][user_id]
                 mark_db_dirty()
@@ -2193,7 +2199,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f"❌ خطا در ارسال پیام همگانی: {e}")
                 return
 
-            if user_id in db["states"].get("waiting_lef_media", []) and user_id == OWNER_ID:
+            if user_id in db["states"].get("waiting_lef_media", []) and int(user_id) == int(OWNER_ID):
                 media = None
                 if update.message.sticker: media = {"type": "sticker", "file_id": update.message.sticker.file_id}
                 elif update.message.photo: media = {"type": "photo", "file_id": update.message.photo[-1].file_id}
@@ -2235,7 +2241,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_db(force=True)
                     return
 
-            if user_id in db["states"].get("waiting_cooldown", []) and user_id == OWNER_ID:
+            if user_id in db["states"].get("waiting_cooldown", []) and int(user_id) == int(OWNER_ID):
                 if raw_text and raw_text.isdigit():
                     val = int(raw_text)
                     if val > 0:
@@ -2346,7 +2352,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄⢜⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄笼⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
@@ -2908,7 +2914,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # GLOBAL ERROR HANDLER & MAIN
 # ==========================================
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Error: {context.error}", exc_info=context.error)
+    logger.error(f"Global Error: {context.error}", exc_info=context.error)
 
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
