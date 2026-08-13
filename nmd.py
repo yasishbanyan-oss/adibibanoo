@@ -582,9 +582,10 @@ async def post_init(application: Application):
 # ==========================================
 # ADMIN PANEL RENDERING
 # ==========================================
-async def render_owner_panel_message(query):
-    db = load_db()
+def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
+    """جداسازی منطق تولید متن و کیبورد پنل مالک جهت استفاده در پیام جدید یا ویرایش پیام"""
     user_count = len(db.get("started_users", {}))
+    text = "<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>"
     buttons = [
         [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef", style="primary")],
         [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
@@ -595,8 +596,19 @@ async def render_owner_panel_message(query):
         [InlineKeyboardButton("😂 تنظیم فحش عادی", callback_data="panel_fun_normal", style="primary")],
         [InlineKeyboardButton("📋 ادمین لاگ", callback_data="panel_admin_logs", style="primary")]
     ]
-    keyboard = InlineKeyboardMarkup(buttons)
-    await query.message.edit_text("<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    return text, InlineKeyboardMarkup(buttons)
+
+async def render_owner_panel_message(target):
+    """
+    پشتیبانی از هر دو ورودی CallbackQuery و Message جهت نمایش بدون خطا
+    """
+    db = load_db()
+    text, keyboard = get_owner_panel_content(db)
+    
+    if hasattr(target, "edit_text"): # اگر CallbackQuery بود
+        await target.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    elif hasattr(target, "reply_text"): # اگر Message بود
+        await target.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 # بازطراحی ساختار جدید پنل مدیریت گروه
 async def render_group_admin_panel_message(query):
@@ -2328,7 +2340,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣝⠖⠄⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿ issue⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍ military⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
