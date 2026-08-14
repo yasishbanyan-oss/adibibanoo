@@ -1,4 +1,5 @@
 import html
+import io
 import json
 import logging
 import os
@@ -17,8 +18,9 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReactionTypeEmoji
 )
-from telegram.constants import ParseMode, ChatMemberStatus
+from telegram.constants import ParseMode, ChatMemberStatus, PollType
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -41,6 +43,10 @@ BROKEN_DB_FILE = "db.json.broken"
 
 MAX_FUN_MESSAGES = 20
 BROADCAST_CANCEL_FLAG = False
+
+# Cooldown memory for reactions (user_id -> last_timestamp)
+REACTION_COOLDOWNS = {}
+ALLOWED_REACTIONS = ["❤️", "👍", "👎", "😂", "🔥", "🎉", "🤡", "💯"]
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -126,7 +132,7 @@ def get_persian_date_str():
     return f"{wd} ، ساعت {time_str}"
 
 # ==========================================
-# GLOBAL DB CACHE & DIRTY FLAG
+# GLOBAL DB CACHE & DIRTY FLAG & ISOLATION HELPERS
 # ==========================================
 _DB_CACHE = None
 _DB_DIRTY = False
@@ -151,31 +157,41 @@ DEFAULT_POEMS = [
     "نه جانی ماند و نه دلداری ماند، {name} ماند و یک کونِ بادکرده!"
 ]
 
-def get_default_db_structure() -> dict:
+def get_default_group_structure() -> dict:
     return {
-        "members": {},
-        "hourly_messages": {},
-        "recent_active_users": {},
-        "last_job_reset": 0,
-        "active_chats": [],
+        "title": "",
+        "fun_named_responses": [],
+        "fun_normal_responses": [],
         "foods": list(DEFAULT_FOODS),
         "custom_names": [],
         "poems": list(DEFAULT_POEMS),
         "media_lef": None,
-        "cooldown_minutes": 10,
         "cooldowns": {},
+        "welcome": {"enabled": True, "custom": False},
+        "comment": {"enabled": False, "custom": False},
+        "random_reaction": True,
+        "invite_link": None,
+        "message_logs": []
+    }
+
+def get_default_db_structure() -> dict:
+    return {
+        "version": 2,
+        "members": {},
+        "groups": {},
+        "hourly_messages": {},
+        "recent_active_users": {},
+        "last_job_reset": 0,
+        "active_chats": [],
+        "cooldown_minutes": 10,
         "couples": {},
         "reports": {},
         "xo_games": {},
         "user_stats": {},
         "action_records": {},
-        "welcome_settings": {},
-        "comment_settings": {},
         "commented_channel_posts": [],
         "started_users": {},
         "admin_logs": [],
-        "fun_named_responses": [],
-        "fun_normal_responses": [],
         "features": {
             "world_time": True,
             "handsome": True,
@@ -193,21 +209,69 @@ def get_default_db_structure() -> dict:
             "jazab": True
         },
         "states": {
-            "waiting_lef_media": [],
-            "waiting_add_food": [],
-            "waiting_del_food": [],
+            "waiting_lef_media": {},
+            "waiting_add_food": {},
+            "waiting_del_food": {},
             "waiting_cooldown": [],
-            "waiting_poem_names": [],
-            "waiting_add_poem": [],
+            "waiting_poem_names": {},
+            "waiting_add_poem": {},
             "waiting_broadcast_group": [],
             "waiting_broadcast_msg": {},
             "waiting_welcome_msg": {},
             "waiting_comment_msg": {},
             "waiting_user_broadcast_msg": [],
-            "waiting_fun_named_msg": [],
-            "waiting_fun_normal_msg": []
+            "waiting_fun_named_msg": {},
+            "waiting_fun_normal_msg": {},
+            "waiting_search_query": {},
+            "broadcast_builder": {}
         }
     }
+
+def migrate_db_if_needed(data: dict) -> dict:
+    """Safe automatic database migration from v1/flat to v2 group-isolated."""
+    if data.get("version") == 2:
+        return data
+
+    logger.info("Migrating database to isolated group architecture v2...")
+    if os.path.exists(DB_FILE):
+        backup_file = f"{DB_FILE}.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        shutil.copyfile(DB_FILE, backup_file)
+        logger.info(f"Created pre-migration backup at: {backup_file}")
+
+    new_db = get_default_db_structure()
+
+    for k in ["members", "hourly_messages", "recent_active_users", "active_chats", 
+              "cooldown_minutes", "couples", "reports", "xo_games", "user_stats", 
+              "action_records", "commented_channel_posts", "started_users", "admin_logs", "features"]:
+        if k in data:
+            new_db[k] = data[k]
+
+    groups = {}
+    active_chats = data.get("active_chats", [])
+
+    for cid in active_chats:
+        cid_str = str(cid)
+        g_data = get_default_group_structure()
+        if "foods" in data: g_data["foods"] = list(data["foods"])
+        if "custom_names" in data: g_data["custom_names"] = list(data["custom_names"])
+        if "poems" in data: g_data["poems"] = list(data["poems"])
+        if "media_lef" in data: g_data["media_lef"] = data["media_lef"]
+        if "fun_named_responses" in data: g_data["fun_named_responses"] = list(data["fun_named_responses"])
+        if "fun_normal_responses" in data: g_data["fun_normal_responses"] = list(data["fun_normal_responses"])
+
+        if "welcome_settings" in data and cid_str in data["welcome_settings"]:
+            g_data["welcome"] = data["welcome_settings"][cid_str]
+        if "comment_settings" in data and cid_str in data["comment_settings"]:
+            g_data["comment"] = data["comment_settings"][cid_str]
+        if "cooldowns" in data and cid_str in data["cooldowns"]:
+            g_data["cooldowns"] = data["cooldowns"][cid_str]
+
+        groups[cid_str] = g_data
+
+    new_db["groups"] = groups
+    new_db["version"] = 2
+    logger.info(f"Migration completed successfully. Migrated {len(groups)} groups.")
+    return new_db
 
 def load_db() -> dict:
     global _DB_CACHE
@@ -224,13 +288,14 @@ def load_db() -> dict:
     try:
         with open(DB_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+            data = migrate_db_if_needed(data)
             for key, val in default_struct.items():
                 if key not in data:
                     data[key] = val
             _DB_CACHE = data
             return _DB_CACHE
-    except (json.JSONDecodeError, Exception) as e:
-        logger.error(f"Database corrupted! Error: {e}")
+    except Exception as e:
+        logger.error(f"Database load error! Initializing default. Details: {e}")
         _DB_CACHE = default_struct
         save_db(force=True)
         return _DB_CACHE
@@ -253,6 +318,68 @@ def save_db(force: bool = False):
         _DB_DIRTY = False
     except Exception as e:
         logger.error(f"Error saving DB: {e}")
+
+# ==========================================
+# GROUP ISOLATION CRUD FUNCTIONS
+# ==========================================
+def get_group_data(db: dict, chat_id: int | str) -> dict:
+    cid_str = str(chat_id)
+    groups = db.setdefault("groups", {})
+    if cid_str not in groups:
+        groups[cid_str] = get_default_group_structure()
+        mark_db_dirty()
+    return groups[cid_str]
+
+def extract_media_payload(msg) -> dict | None:
+    """Safely captures any media type with file_id and caption."""
+    if not msg:
+        return None
+    caption = msg.caption_html if msg.caption else ""
+    if msg.text:
+        return {"type": "text", "text": msg.text_html}
+    if msg.photo:
+        return {"type": "photo", "file_id": msg.photo[-1].file_id, "caption": caption}
+    if msg.animation:
+        return {"type": "animation", "file_id": msg.animation.file_id, "caption": caption}
+    if msg.video:
+        return {"type": "video", "file_id": msg.video.file_id, "caption": caption}
+    if msg.voice:
+        return {"type": "voice", "file_id": msg.voice.file_id, "caption": caption}
+    if msg.audio:
+        return {"type": "audio", "file_id": msg.audio.file_id, "caption": caption}
+    if msg.document:
+        return {"type": "document", "file_id": msg.document.file_id, "caption": caption}
+    if msg.sticker:
+        return {"type": "sticker", "file_id": msg.sticker.file_id}
+    return None
+
+async def send_media_payload(bot, chat_id: int, payload: dict, reply_to_message_id: int | None = None) -> bool:
+    try:
+        mtype = payload.get("type")
+        fid = payload.get("file_id")
+        cap = payload.get("caption", "")
+        txt = payload.get("text", "")
+
+        if mtype == "text":
+            await bot.send_message(chat_id=chat_id, text=txt, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+        elif mtype == "photo":
+            await bot.send_photo(chat_id=chat_id, photo=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+        elif mtype == "animation":
+            await bot.send_animation(chat_id=chat_id, animation=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+        elif mtype == "video":
+            await bot.send_video(chat_id=chat_id, video=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+        elif mtype == "voice":
+            await bot.send_voice(chat_id=chat_id, voice=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+        elif mtype == "audio":
+            await bot.send_audio(chat_id=chat_id, audio=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+        elif mtype == "document":
+            await bot.send_document(chat_id=chat_id, document=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+        elif mtype == "sticker":
+            await bot.send_sticker(chat_id=chat_id, sticker=fid, reply_to_message_id=reply_to_message_id)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to dispatch media payload: {e}")
+        return False
 
 # ==========================================
 # USER RESOLUTION & ADMIN LOGGING SYSTEM
@@ -352,6 +479,38 @@ async def register_member(update: Update, db: dict):
             db["active_chats"].append(chat.id)
             mark_db_dirty()
             
+        g_data = get_group_data(db, chat.id)
+        g_data["title"] = chat.title or g_data.get("title", "")
+
+        # Log active messages for in-group search
+        if update.message and (update.message.text or update.message.caption or update.message.photo):
+            m_logs = g_data.setdefault("message_logs", [])
+            log_item = {
+                "message_id": update.message.message_id,
+                "user_id": user.id,
+                "user_name": fullname,
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "text": update.message.text or update.message.caption or "",
+                "media_type": "text"
+            }
+            if update.message.photo:
+                log_item["media_type"] = "photo"
+                log_item["file_id"] = update.message.photo[-1].file_id
+            elif update.message.animation:
+                log_item["media_type"] = "animation"
+                log_item["file_id"] = update.message.animation.file_id
+            elif update.message.video:
+                log_item["media_type"] = "video"
+                log_item["file_id"] = update.message.video.file_id
+            elif update.message.document:
+                log_item["media_type"] = "document"
+                log_item["file_id"] = update.message.document.file_id
+
+            m_logs.append(log_item)
+            if len(m_logs) > 300:
+                m_logs.pop(0)
+            mark_db_dirty()
+
         if "hourly_messages" not in db: db["hourly_messages"] = {}
         if chat_str not in db["hourly_messages"]: db["hourly_messages"][chat_str] = {}
         db["hourly_messages"][chat_str][user_id] = db["hourly_messages"][chat_str].get(user_id, 0) + 1
@@ -393,8 +552,8 @@ async def get_fast_random_member(context: ContextTypes.DEFAULT_TYPE, chat_id: in
 # COOLDOWN SYSTEM
 # ==========================================
 def get_cooldown_remaining(db: dict, chat_id: int, feature: str) -> tuple[bool, int, dict]:
-    chat_str = str(chat_id)
-    cooldowns = db.get("cooldowns", {}).get(chat_str, {})
+    g_data = get_group_data(db, chat_id)
+    cooldowns = g_data.get("cooldowns", {})
     if feature not in cooldowns:
         return False, 0, {}
     
@@ -408,11 +567,9 @@ def get_cooldown_remaining(db: dict, chat_id: int, feature: str) -> tuple[bool, 
     return False, 0, {}
 
 def set_cooldown_data(db: dict, chat_id: int, feature: str, data: dict):
-    chat_str = str(chat_id)
-    if "cooldowns" not in db: db["cooldowns"] = {}
-    if chat_str not in db["cooldowns"]: db["cooldowns"][chat_str] = {}
-        
-    db["cooldowns"][chat_str][feature] = {
+    g_data = get_group_data(db, chat_id)
+    cooldowns = g_data.setdefault("cooldowns", {})
+    cooldowns[feature] = {
         "timestamp": datetime.now().timestamp(),
         "data": data
     }
@@ -428,7 +585,16 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     new_status = result.new_chat_member.status
+    chat = result.chat
+    db = load_db()
     if new_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR]:
+        g_data = get_group_data(db, chat.id)
+        g_data["title"] = chat.title or ""
+        if chat.id not in db["active_chats"]:
+            db["active_chats"].append(chat.id)
+            mark_db_dirty()
+            save_db(force=True)
+
         welcome_msg = (
             "<b>سلام نینیا ، گودی اینجاست...! </b>"
             '<tg-emoji emoji-id="5276251363313996750">😊</tg-emoji>\n\n'
@@ -436,19 +602,23 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '<tg-emoji emoji-id="5274211661870295868">😌</tg-emoji>'
         )
         try:
-            await context.bot.send_message(chat_id=result.chat.id, text=welcome_msg, parse_mode=ParseMode.HTML)
+            await context.bot.send_message(chat_id=chat.id, text=welcome_msg, parse_mode=ParseMode.HTML)
         except Exception as e:
             logger.error(f"Failed to send welcome message: {e}")
+    elif new_status in [ChatMemberStatus.LEFT, ChatMemberStatus.BANNED]:
+        if chat.id in db["active_chats"]:
+            db["active_chats"].remove(chat.id)
+            mark_db_dirty()
+            save_db(force=True)
 
 async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.new_chat_members:
         return
 
     chat = update.effective_chat
-    chat_id_str = str(chat.id)
     db = load_db()
-
-    welcome_settings = db.get("welcome_settings", {}).get(chat_id_str, {})
+    g_data = get_group_data(db, chat.id)
+    welcome_settings = g_data.get("welcome", {})
     
     if not welcome_settings.get("enabled", True):
         return
@@ -470,36 +640,36 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
                 logger.error(f"Error sending default welcome: {e}")
             continue
 
-        saved_msg_id = welcome_settings.get("saved_msg_id")
-        from_chat_id = welcome_settings.get("saved_from_chat_id")
-
-        if saved_msg_id and from_chat_id:
-            try:
-                await context.bot.copy_message(
-                    chat_id=chat.id,
-                    from_chat_id=from_chat_id,
-                    message_id=saved_msg_id,
-                    reply_to_message_id=update.message.message_id
-                )
-            except Exception as e:
-                logger.exception(f"Error copying custom welcome message: {e}")
+        payload = welcome_settings.get("payload")
+        if payload:
+            raw_text = payload.get("text") or payload.get("caption") or ""
+            formatted_text = (
+                raw_text.replace("USERNAME", user_mention)
+                .replace("{name}", user_mention)
+                .replace("XXXX", chat_title)
+                .replace("TIME", time_str)
+                .replace("DAY", day_fa)
+            )
+            temp_payload = dict(payload)
+            if "text" in temp_payload:
+                temp_payload["text"] = formatted_text
+            if "caption" in temp_payload:
+                temp_payload["caption"] = formatted_text
+            await send_media_payload(context.bot, chat.id, temp_payload, reply_to_message_id=update.message.message_id)
 
 async def handle_automatic_channel_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg:
-        return
-
-    if not getattr(msg, "is_automatic_forward", False):
+    if not msg or not getattr(msg, "is_automatic_forward", False):
         return
 
     chat = update.effective_chat
     if not chat or chat.type not in ["group", "supergroup"]:
         return
 
-    chat_id_str = str(chat.id)
     db = load_db()
+    g_data = get_group_data(db, chat.id)
+    comment_settings = g_data.get("comment", {})
 
-    comment_settings = db.get("comment_settings", {}).get(chat_id_str, {})
     if not comment_settings.get("enabled", False):
         return
 
@@ -508,30 +678,17 @@ async def handle_automatic_channel_comments(update: Update, context: ContextType
     if msg_key in commented_posts:
         return
 
-    saved_msg_id = comment_settings.get("saved_msg_id")
-    from_chat_id = comment_settings.get("saved_from_chat_id")
-
-    if not saved_msg_id or not from_chat_id:
-        logger.warning(f"Comment enabled for chat {chat.id} but no comment message saved.")
+    payload = comment_settings.get("payload")
+    if not payload:
         return
 
-    try:
-        await context.bot.copy_message(
-            chat_id=chat.id,
-            from_chat_id=from_chat_id,
-            message_id=saved_msg_id,
-            reply_to_message_id=msg.message_id
-        )
-        
+    success = await send_media_payload(context.bot, chat.id, payload, reply_to_message_id=msg.message_id)
+    if success:
         commented_posts.append(msg_key)
         if len(commented_posts) > 500:
             commented_posts.pop(0)
         mark_db_dirty()
         save_db()
-
-        logger.info(f"[CHANNEL_COMMENT_SENT] Reply to post {msg.message_id} in chat {chat.id}")
-    except Exception as e:
-        logger.exception(f"Error sending automatic channel comment: {e}")
 
 async def hourly_goh_khor_job(context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
@@ -583,47 +740,49 @@ async def post_init(application: Application):
 # ADMIN PANEL RENDERING & OWNER PANEL LOGIC
 # ==========================================
 def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
-    """ساخت دقیق متن و کیبورد پنل مدیریت کل ربات"""
     user_count = len(db.get("started_users", {}))
+    group_count = len(db.get("active_chats", []))
     text = "<b>مالک محترم ربات 👑\n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>"
     buttons = [
-        [InlineKeyboardButton("🖼 رسانه لف", callback_data="panel_media_lef", style="primary")],
+        [InlineKeyboardButton(f"📋 مشخصات گروه‌ها ({group_count})", callback_data="panel_owner_groups_1", style="primary")],
         [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
         [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
-        [InlineKeyboardButton("📢 پیام همگانی گروه ها", callback_data="panel_broadcast", style="primary")],
+        [InlineKeyboardButton("📢 پیام همگانی پیشرفته (Broadcast)", callback_data="panel_bcast_type_select", style="primary")],
         [InlineKeyboardButton(f"📢 پیام همگانی کاربران ({user_count})", callback_data="panel_user_broadcast", style="success")],
-        [InlineKeyboardButton("😈 تنظیم فحش ناموسی", callback_data="panel_fun_named", style="danger")],
-        [InlineKeyboardButton("😂 تنظیم فحش عادی", callback_data="panel_fun_normal", style="primary")],
         [InlineKeyboardButton("📋 ادمین لاگ", callback_data="panel_admin_logs", style="primary")]
     ]
     return text, InlineKeyboardMarkup(buttons)
 
 async def send_owner_panel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تابع اختصاصی ارسال پیام جدید پنل مالک در جواب /panel"""
     db = load_db()
     text, keyboard = get_owner_panel_content(db)
     await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 async def edit_owner_panel_message(query):
-    """تابع اختصاصی ویرایش پیام پنل مالک برای callback_data="panel_owner_main" """
     db = load_db()
     text, keyboard = get_owner_panel_content(db)
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
-# بازطراحی پنل مدیریت گروه
-async def render_group_admin_panel_message(query):
+async def render_group_admin_panel_message(query, chat_id: int):
+    db = load_db()
+    g_data = get_group_data(db, chat_id)
+    title = html.escape(g_data.get("title") or "این گروه")
     text = (
-        "<b>🛠 پنل مدیریت گروه</b>\n\n"
+        f"<b>🛠 پنل مدیریت اختصاصی گروه: {title}</b>\n\n"
         "سلام عزیزم، به پنل مدیریت گروه خوش اومدی! 👋\n\n"
-        "از طریق دکمه‌های زیر می‌تونی تنظیمات گروه رو مدیریت کنی."
+        "از طریق دکمه‌های زیر می‌تونی تنظیمات ویژه همین گروه را مدیریت کنی."
     )
     buttons = [
         [
-            InlineKeyboardButton("🔒 قفل ها", callback_data="panel_group_locks", style="primary"),
-            InlineKeyboardButton("📋 لیست ها", callback_data="panel_group_lists", style="primary")
+            InlineKeyboardButton("🔒 قفل ها", callback_data=f"panel_group_locks:{chat_id}", style="primary"),
+            InlineKeyboardButton("📋 لیست ها", callback_data=f"panel_group_lists:{chat_id}", style="primary")
         ],
         [
-            InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data="panel_group_advanced", style="primary")
+            InlineKeyboardButton("😈 تنظیم فحش ناموسی", callback_data=f"grp_fun_named:{chat_id}", style="danger"),
+            InlineKeyboardButton("😂 تنظیم فحش عادی", callback_data=f"grp_fun_normal:{chat_id}", style="primary")
+        ],
+        [
+            InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data=f"panel_group_advanced:{chat_id}", style="primary")
         ],
         [
             InlineKeyboardButton("🔙 بستن", callback_data="panel_group_close", style="danger")
@@ -633,8 +792,8 @@ async def render_group_admin_panel_message(query):
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 async def render_welcome_panel_message(query, chat_id: int, db: dict):
-    chat_id_str = str(chat_id)
-    w_set = db.get("welcome_settings", {}).get(chat_id_str, {})
+    g_data = get_group_data(db, chat_id)
+    w_set = g_data.get("welcome", {})
     is_enabled = w_set.get("enabled", True)
     has_custom = w_set.get("custom", False)
 
@@ -649,16 +808,16 @@ async def render_welcome_panel_message(query, chat_id: int, db: dict):
 
     toggle_btn_text = "❌ غیرفعال کردن" if is_enabled else "✅ فعال کردن"
     buttons = [
-        [InlineKeyboardButton(toggle_btn_text, callback_data="welcome_toggle", style="primary")],
-        [InlineKeyboardButton("⚙️ تنظیم پیام خوش‌آمد", callback_data="welcome_set", style="success")],
-        [InlineKeyboardButton("🗑 حذف پیام اختصاصی", callback_data="welcome_delete_confirm", style="danger")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_group_advanced", style="primary")]
+        [InlineKeyboardButton(toggle_btn_text, callback_data=f"welcome_toggle:{chat_id}", style="primary")],
+        [InlineKeyboardButton("⚙️ تنظیم پیام خوش‌آمد", callback_data=f"welcome_set:{chat_id}", style="success")],
+        [InlineKeyboardButton("🗑 حذف پیام اختصاصی", callback_data=f"welcome_delete_confirm:{chat_id}", style="danger")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_advanced:{chat_id}", style="primary")]
     ]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 async def render_comment_panel_message(query, chat_id: int, db: dict):
-    chat_id_str = str(chat_id)
-    c_set = db.get("comment_settings", {}).get(chat_id_str, {})
+    g_data = get_group_data(db, chat_id)
+    c_set = g_data.get("comment", {})
     is_enabled = c_set.get("enabled", False)
     has_custom = c_set.get("custom", False)
 
@@ -673,48 +832,77 @@ async def render_comment_panel_message(query, chat_id: int, db: dict):
 
     toggle_btn_text = "❌ خاموش کردن" if is_enabled else "✅ فعال کردن"
     buttons = [
-        [InlineKeyboardButton("💬 تنظیم کامنت", callback_data="comment_set", style="success")],
-        [InlineKeyboardButton(toggle_btn_text, callback_data="comment_toggle", style="primary")],
-        [InlineKeyboardButton("🗑 حذف کامنت ذخیره‌شده", callback_data="comment_delete", style="danger")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_group_advanced", style="primary")]
+        [InlineKeyboardButton("💬 تنظیم کامنت", callback_data=f"comment_set:{chat_id}", style="success")],
+        [InlineKeyboardButton(toggle_btn_text, callback_data=f"comment_toggle:{chat_id}", style="primary")],
+        [InlineKeyboardButton("🗑 حذف کامنت ذخیره‌شده", callback_data=f"comment_delete:{chat_id}", style="danger")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_advanced:{chat_id}", style="primary")]
     ]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-async def render_user_broadcast_panel_message(query, db: dict):
-    started_users = db.get("started_users", {})
-    user_count = len(started_users)
-
-    text = (
-        f"📢 <b>پیام همگانی به تمام کاربران خصوصی ربات</b>\n\n"
-        f"👥 <b>تعداد کاربران دریافت‌کننده (Start شده):</b> <code>{user_count}</code> نفر\n\n"
-        f"با کلیک روی دکمه زیر، پیام خود را بفرستید."
-    )
-
-    buttons = [
-        [InlineKeyboardButton("✉️ ارسال پیام همگانی", callback_data="user_broadcast_send", style="success")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
-    ]
-    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-
-async def render_fun_panel(query, fun_type: str, db: dict):
-    title = "😈 مدیریت فحش ناموسی" if fun_type == "named" else "😂 مدیریت فحش عادی"
+async def render_group_fun_panel(query, fun_type: str, chat_id: int, db: dict):
+    title = "😈 مدیریت فحش ناموسی گروه" if fun_type == "named" else "😂 مدیریت فحش عادی گروه"
     key = "fun_named_responses" if fun_type == "named" else "fun_normal_responses"
-    items = db.get(key, [])
+    g_data = get_group_data(db, chat_id)
+    items = g_data.get(key, [])
     
     text = (
         f"<b>{title}</b>\n\n"
-        f"<b>تعداد پاسخ‌های ثبت‌شده:</b> <code>{len(items)}</code> عدد"
+        f"<b>تعداد پاسخ‌های ثبت‌شده برای این گروه:</b> <code>{len(items)}</code> عدد"
     )
 
-    add_cb = f"fun_{fun_type}_add"
-    list_cb = f"fun_{fun_type}_list"
-    del_all_cb = f"fun_{fun_type}_del_all"
+    buttons = [
+        [InlineKeyboardButton("➕ افزودن پاسخ", callback_data=f"grp_fun_add:{fun_type}:{chat_id}", style="success")],
+        [InlineKeyboardButton("📋 مشاهده تعداد", callback_data=f"grp_fun_list:{fun_type}:{chat_id}", style="primary")],
+        [InlineKeyboardButton("🧹 حذف همه پاسخ‌ها", callback_data=f"grp_fun_del_all:{fun_type}:{chat_id}", style="danger")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="primary")]
+    ]
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+async def render_owner_groups_page(query, page: int, db: dict, context: ContextTypes.DEFAULT_TYPE):
+    active_chats = db.get("active_chats", [])
+    page_size = 5
+    total_pages = max(1, (len(active_chats) + page_size - 1) // page_size)
+    page = max(1, min(page, total_pages))
+
+    start_idx = (page - 1) * page_size
+    current_chats = active_chats[start_idx:start_idx + page_size]
+
+    text = f"📋 <b>مشخصات گروه‌ها (صفحه {page} از {total_pages})</b>\n\nلطفاً گروه موردنظر را انتخاب کنید:"
+    buttons = []
+
+    for cid in current_chats:
+        g_data = get_group_data(db, cid)
+        title = g_data.get("title") or str(cid)
+        buttons.append([InlineKeyboardButton(f"🏠 {title}", callback_data=f"ogrp_view:{cid}", style="primary")])
+
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("⬅️ قبلی", callback_data=f"panel_owner_groups_{page-1}", style="primary"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("بعدی ➡️", callback_data=f"panel_owner_groups_{page+1}", style="primary"))
+
+    if nav_row:
+        buttons.append(nav_row)
+    buttons.append([InlineKeyboardButton("🔙 بازگشت به پنل اصلی", callback_data="panel_owner_main", style="primary")])
+
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+async def render_owner_single_group_panel(query, target_cid: int, db: dict, context: ContextTypes.DEFAULT_TYPE):
+    g_data = get_group_data(db, target_cid)
+    title = html.escape(g_data.get("title") or "بدون عنوان")
+    
+    text = (
+        f"📋 <b>مشخصات گروه: {title}</b>\n"
+        f"🆔 <b>Chat ID:</b> <code>{target_cid}</code>\n\n"
+        "یکی از گزینه‌های زیر را انتخاب نمایید:"
+    )
 
     buttons = [
-        [InlineKeyboardButton("➕ افزودن پاسخ", callback_data=add_cb, style="success")],
-        [InlineKeyboardButton("📋 مشاهده پاسخ‌ها", callback_data=list_cb, style="primary")],
-        [InlineKeyboardButton("🧹 حذف همه", callback_data=del_all_cb, style="danger")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
+        [InlineKeyboardButton("🔗 لینک گروه", callback_data=f"ogrp_link:{target_cid}", style="primary")],
+        [InlineKeyboardButton("👥 اعضای گروه (TXT)", callback_data=f"ogrp_members:{target_cid}", style="primary")],
+        [InlineKeyboardButton("🔎 سرچ پیام (TXT)", callback_data=f"ogrp_search:{target_cid}", style="primary")],
+        [InlineKeyboardButton("👮 ادمین‌ها (TXT)", callback_data=f"ogrp_admins:{target_cid}", style="primary")],
+        [InlineKeyboardButton("🔙 بازگشت به لیست گروه‌ها", callback_data="panel_owner_groups_1", style="primary")]
     ]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -781,7 +969,6 @@ def check_xo_winner(board):
 
 def build_xo_keyboard(game_id: str, board: list, is_finished: bool = False) -> InlineKeyboardMarkup:
     buttons = []
-    
     for i in range(0, 9, 3):
         row = []
         for j in range(i, i + 3):
@@ -856,6 +1043,47 @@ async def dwoz_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         raise ApplicationHandlerStop()
 
 # ==========================================
+# RANDOM REACTION SYSTEM ON REPLY
+# ==========================================
+async def handle_random_reply_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Executes a random reaction on replied target message with anti-spam cooldown."""
+    try:
+        msg = update.message
+        if not msg or not msg.reply_to_message:
+            return
+
+        chat = update.effective_chat
+        user = update.effective_user
+        if not chat or chat.type not in ["group", "supergroup"] or not user:
+            return
+
+        db = load_db()
+        g_data = get_group_data(db, chat.id)
+        if not g_data.get("random_reaction", True):
+            return
+
+        now = datetime.now().timestamp()
+        last_reaction_time = REACTION_COOLDOWNS.get(user.id, 0)
+        if now - last_reaction_time < 5:  # 5-second cooldown per user
+            return
+
+        # 35% chance to trigger random reaction to prevent flood
+        if random.random() > 0.35:
+            return
+
+        target_msg_id = msg.reply_to_message.message_id
+        selected_emoji = random.choice(ALLOWED_REACTIONS)
+        REACTION_COOLDOWNS[user.id] = now
+
+        await context.bot.set_message_reaction(
+            chat_id=chat.id,
+            message_id=target_msg_id,
+            reaction=[ReactionTypeEmoji(selected_emoji)]
+        )
+    except Exception as e:
+        logger.debug(f"Random reaction skipped/unsupported: {e}")
+
+# ==========================================
 # CALLBACK QUERY HANDLER
 # ==========================================
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -863,7 +1091,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     data = query.data
     user_id = query.from_user.id
-    chat_id = query.message.chat.id if query.message else 0
+    current_chat_id = query.message.chat.id if query.message else 0
     db = load_db()
 
     # ۱. کمک / راهنما
@@ -871,57 +1099,323 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Coming soon..!", show_alert=True)
         return
 
-    # ۲. نویگیشن جدید پنل مدیریت گروه
-    elif data == "panel_group_locks":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    # ۲. پنل مشخصات گروه‌ها مالک
+    elif data.startswith("panel_owner_groups_"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز! فقط مالک کل.", show_alert=True)
+            return
+        page = int(data.split("_")[-1])
+        await render_owner_groups_page(query, page, db, context)
+        return
+
+    elif data.startswith("ogrp_view:"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        target_cid = int(data.replace("ogrp_view:", ""))
+        await render_owner_single_group_panel(query, target_cid, db, context)
+        return
+
+    elif data.startswith("ogrp_link:"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        target_cid = int(data.replace("ogrp_link:", ""))
+        invite_link = None
+        try:
+            bot_member = await context.bot.get_chat_member(target_cid, context.bot.id)
+            if bot_member.status == ChatMemberStatus.ADMINISTRATOR:
+                invite_link = await context.bot.export_chat_invite_link(target_cid)
+        except Exception:
+            pass
+
+        if not invite_link:
+            g_data = get_group_data(db, target_cid)
+            invite_link = g_data.get("invite_link")
+
+        if invite_link:
+            await query.message.reply_text(f"🔗 <b>لینک گروه:</b>\n{invite_link}", parse_mode=ParseMode.HTML)
+        else:
+            await query.message.reply_text("❌ مأموریت انجام نشد. (ربات دسترسی ساخت لینک در گروه را ندارد یا ذخیره نشده است)")
+        await query.answer()
+        return
+
+    elif data.startswith("ogrp_admins:"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        target_cid = int(data.replace("ogrp_admins:", ""))
+        g_data = get_group_data(db, target_cid)
+        title = g_data.get("title", "گروه")
+
+        report_lines = [
+            "GROUP ADMINS",
+            "============",
+            f"Group: {title}",
+            f"Chat ID: {target_cid}",
+            ""
+        ]
+
+        try:
+            admins = await context.bot.get_chat_administrators(target_cid)
+            for idx, a in enumerate(admins, 1):
+                report_lines.append(f"{idx}.")
+                report_lines.append(f"Name: {a.user.full_name}")
+                report_lines.append(f"Username: @{a.user.username}" if a.user.username else "Username: None")
+                report_lines.append(f"ID: {a.user.id}")
+                report_lines.append(f"Status: {a.status}")
+                report_lines.append(f"Custom Title: {a.custom_title or 'None'}")
+                report_lines.append("")
+        except Exception as e:
+            report_lines.append(f"Error fetching administrators: {e}")
+
+        report_content = "\n".join(report_lines)
+        file_bytes = io.BytesIO(report_content.encode("utf-8"))
+        file_bytes.name = f"admins_{target_cid}.txt"
+        await query.message.reply_document(document=file_bytes, caption=f"👮 گزارش لیست ادمین‌های گروه <code>{target_cid}</code>", parse_mode=ParseMode.HTML)
+        await query.answer()
+        return
+
+    elif data.startswith("ogrp_members:"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        target_cid = int(data.replace("ogrp_members:", ""))
+        g_data = get_group_data(db, target_cid)
+        title = g_data.get("title", "گروه")
+
+        member_count = "نامشخص"
+        try:
+            member_count = await context.bot.get_chat_member_count(target_cid)
+        except Exception:
+            pass
+
+        report_lines = [
+            "GROUP INFO",
+            "==========",
+            f"Title: {title}",
+            f"Chat ID: {target_cid}",
+            f"Member Count: {member_count}",
+            "",
+            "MEMBERS (Discovered in Database Cache)",
+            "=====================================",
+            "NOTE: Some fields are unavailable through Telegram Bot API.",
+            ""
+        ]
+
+        active_users = db.get("recent_active_users", {}).get(str(target_cid), [])
+        for idx, (uid_str, info) in enumerate(active_users, 1):
+            report_lines.append(f"{idx}.")
+            report_lines.append(f"Name: {info.get('fullname')}")
+            report_lines.append(f"Username: @{info.get('username')}" if info.get("username") else "Username: None")
+            report_lines.append(f"ID: {uid_str}")
+            report_lines.append("Status: Active/Member")
+            report_lines.append("")
+
+        report_content = "\n".join(report_lines)
+        file_bytes = io.BytesIO(report_content.encode("utf-8"))
+        file_bytes.name = f"members_{target_cid}.txt"
+        await query.message.reply_document(document=file_bytes, caption=f"👥 گزارش اعضای در دسترس گروه <code>{target_cid}</code>", parse_mode=ParseMode.HTML)
+        await query.answer()
+        return
+
+    elif data.startswith("ogrp_search:"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        target_cid = int(data.replace("ogrp_search:", ""))
+        db["states"]["waiting_search_query"][str(user_id)] = target_cid
+        mark_db_dirty()
+        save_db()
+        await query.message.edit_text("🔎 <b>کلمه یا عبارت موردنظر برای جستجو در لاگ‌های این گروه را ارسال کنید:</b>\n\nبرای لغو /cancel را ارسال کنید.", parse_mode=ParseMode.HTML)
+        return
+
+    # ۳. پنل همگانی پیشرفته Broadcast با Poll و کوئیز
+    elif data == "panel_bcast_type_select":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        buttons = [
+            [InlineKeyboardButton("📝 پیام متنی یا رسانه", callback_data="bcast_mode:media", style="primary")],
+            [InlineKeyboardButton("📊 نظرسنجی معمولی (Poll)", callback_data="bcast_mode:poll", style="primary")],
+            [InlineKeyboardButton("🎯 کوئیز (Quiz Poll)", callback_data="bcast_mode:quiz", style="primary")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
+        ]
+        await query.message.edit_text("📢 <b>نوع پیام همگانی (Broadcast) را انتخاب کنید:</b>", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return
+
+    elif data.startswith("bcast_mode:"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        mode = data.replace("bcast_mode:", "")
+        db["states"]["broadcast_builder"][str(user_id)] = {"mode": mode, "step": "dest"}
+        mark_db_dirty()
+        save_db()
+
+        buttons = [
+            [InlineKeyboardButton("👥 تمام گروه‌ها", callback_data="bcast_dest:groups", style="primary")],
+            [InlineKeyboardButton("👤 تمام کاربران خصوصی", callback_data="bcast_dest:users", style="primary")],
+            [InlineKeyboardButton("🌐 همه (گروه‌ها + کاربران)", callback_data="bcast_dest:all", style="success")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_bcast_type_select", style="danger")]
+        ]
+        await query.message.edit_text("🎯 <b>مقصد ارسال پیام همگانی را انتخاب کنید:</b>", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return
+
+    elif data.startswith("bcast_dest:"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        dest = data.replace("bcast_dest:", "")
+        builder = db["states"]["broadcast_builder"].setdefault(str(user_id), {})
+        builder["dest"] = dest
+        builder["step"] = "content"
+        mark_db_dirty()
+        save_db()
+
+        mode = builder.get("mode", "media")
+        if mode == "media":
+            await query.message.edit_text("✉️ <b>لطفاً متن، عکس، GIF، ویدیو، استیکر یا فایل موردنظر را بفرستید:</b>\n\nبرای لغو /cancel را ارسال کنید.", parse_mode=ParseMode.HTML)
+        elif mode == "poll":
+            await query.message.edit_text("📊 <b>لطفاً نظرسنجی موردنظر را به صورت زیر در یک پیام ارسال کنید:</b>\n\n<code>سؤال نظرسنجی\nگزینه 1\nگزینه 2\nگزینه 3</code>\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
+        elif mode == "quiz":
+            await query.message.edit_text("🎯 <b>لطفاً کوئیز را به صورت زیر ارسال کنید (خط آخر شماره گزینه صحیح از ۱):</b>\n\n<code>سؤال کوئیز\nگزینه 1\nگزینه 2\nگزینه 3\nصحیح: 1</code>\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
+        return
+
+    elif data == "bcast_confirm_send":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        builder = db["states"]["broadcast_builder"].get(str(user_id))
+        if not builder:
+            await query.answer("اطلاعات ارسال یافت نشد.", show_alert=True)
+            return
+
+        del db["states"]["broadcast_builder"][str(user_id)]
+        mark_db_dirty()
+        save_db()
+
+        status_msg = await query.message.reply_text("⏳ <b>شروع عملیات ارسال همگانی...</b>", parse_mode=ParseMode.HTML)
+        dest = builder.get("dest", "groups")
+        targets = []
+        if dest in ["groups", "all"]:
+            targets.extend(db.get("active_chats", []))
+        if dest in ["users", "all"]:
+            targets.extend([int(u) for u in db.get("started_users", {}).keys()])
+
+        succ, fail = 0, 0
+        b_type = builder.get("type")
+
+        for tid in targets:
+            try:
+                if b_type == "poll":
+                    p_data = builder["poll_data"]
+                    await context.bot.send_poll(
+                        chat_id=tid,
+                        question=p_data["question"],
+                        options=p_data["options"],
+                        is_anonymous=p_data.get("is_anonymous", True),
+                        type=PollType.QUIZ if p_data.get("is_quiz") else PollType.REGULAR,
+                        correct_option_id=p_data.get("correct_option_id")
+                    )
+                elif b_type == "media":
+                    await send_media_payload(context.bot, tid, builder["payload"])
+                succ += 1
+                await asyncio.sleep(0.04)
+            except Exception:
+                fail += 1
+
+        await status_msg.edit_text(f"📢 <b>عملیات ارسال همگانی به پایان رسید.</b>\n\n✅ ارسال موفق: <code>{succ}</code>\n❌ ناموفق: <code>{fail}</code>", parse_mode=ParseMode.HTML)
+        await query.answer()
+        return
+
+    elif data == "bcast_cancel":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+            return
+        if str(user_id) in db["states"]["broadcast_builder"]:
+            del db["states"]["broadcast_builder"][str(user_id)]
+            mark_db_dirty()
+            save_db()
+        await query.message.edit_text("🚫 عملیات ارسال همگانی لغو شد.")
+        return
+
+    # ۴. نویگیشن و گزینه‌های مدیریت گروهی (Group-Isolated)
+    elif data.startswith("panel_group_main:"):
+        cid = int(data.replace("panel_group_main:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        await render_group_admin_panel_message(query, cid)
+        return
+
+    elif data.startswith("panel_group_locks:"):
+        cid = int(data.replace("panel_group_locks:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
         text = "🚧 <b>این بخش به‌زودی فعال می‌شود!</b>\n\nComing Soon"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="panel_admin_main", style="primary")]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{cid}", style="primary")]])
         await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
-    elif data == "panel_group_advanced":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("panel_group_advanced:"):
+        cid = int(data.replace("panel_group_advanced:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
         buttons = [
-            [InlineKeyboardButton("👋 پیام خوش‌آمدگویی", callback_data="panel_welcome", style="primary")],
-            [InlineKeyboardButton("💬 کامنت", callback_data="panel_comment", style="primary")],
-            [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data="panel_foods", style="primary")],
-            [InlineKeyboardButton("📜 اسامی شعرها", callback_data="panel_poem_names", style="primary")],
-            [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="panel_add_poem", style="success")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_admin_main", style="primary")]
+            [InlineKeyboardButton("👋 پیام خوش‌آمدگویی", callback_data=f"panel_welcome:{cid}", style="primary")],
+            [InlineKeyboardButton("💬 کامنت کانال", callback_data=f"panel_comment:{cid}", style="primary")],
+            [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data=f"panel_foods:{cid}", style="primary")],
+            [InlineKeyboardButton("📜 اسامی شعرها", callback_data=f"panel_poem_names:{cid}", style="primary")],
+            [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data=f"panel_add_poem:{cid}", style="success")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{cid}", style="primary")]
         ]
         await query.message.edit_text("<b>⚙️ تنظیمات پیشرفته گروه:</b>\n\nلطفاً گزینه مورد نظر را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         return
 
-    elif data == "panel_group_lists":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("panel_group_lists:"):
+        cid = int(data.replace("panel_group_lists:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
         buttons = [
-            [InlineKeyboardButton("📢 شعارها", callback_data="panel_list_poems", style="primary")],
-            [InlineKeyboardButton("🍽 لیست غذاها", callback_data="food_page_1", style="primary")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_admin_main", style="primary")]
+            [InlineKeyboardButton("📢 شعارها", callback_data=f"panel_list_poems:{cid}", style="primary")],
+            [InlineKeyboardButton("🍽 لیست غذاها", callback_data=f"panel_list_foods:{cid}", style="primary")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{cid}", style="primary")]
         ]
         await query.message.edit_text("<b>📋 لیست‌های قابل مدیریت گروه:</b>", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         return
 
-    elif data == "panel_list_poems":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("panel_list_poems:"):
+        cid = int(data.replace("panel_list_poems:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        poems_list = db.get("poems", [])
+        g_data = get_group_data(db, cid)
+        poems_list = g_data.get("poems", [])
         if not poems_list:
-            text = "📭 <b>هنوز موردی ثبت نشده است.</b>"
+            text = "📭 <b>هنوز شعری برای این گروه ثبت نشده است.</b>"
         else:
-            text = "📢 <b>لیست شعارهای فعال گروه:</b>\n\n"
+            text = "📢 <b>لیست شعارهای فعال این گروه:</b>\n\n"
             for idx, p in enumerate(poems_list, 1):
                 clean_p = html.escape(p).replace("{name}", "نام‌کاربر")
                 text += f"{idx}. {clean_p}\n"
 
-        buttons = [[InlineKeyboardButton("🔙 بازگشت", callback_data="panel_group_lists", style="primary")]]
+        buttons = [[InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_lists:{cid}", style="primary")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return
+
+    elif data.startswith("panel_list_foods:"):
+        cid = int(data.replace("panel_list_foods:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        g_data = get_group_data(db, cid)
+        foods = g_data.get("foods", [])
+        text = "🍽 <b>لیست غذاهای ذخیره‌شده گروه:</b>\n\n" + ", ".join(foods)
+        buttons = [[InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_lists:{cid}", style="primary")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         return
 
@@ -932,80 +1426,92 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
-    # ۳. ادمین لاگ
-    elif data == "panel_admin_logs":
-        if int(user_id) != int(OWNER_ID):
-            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+    # ۵. مدیریت فحش عادی و ناموسی گروهی
+    elif data.startswith("grp_fun_named:"):
+        cid = int(data.replace("grp_fun_named:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        await render_admin_logs_panel(query, db)
+        await render_group_fun_panel(query, "named", cid, db)
         return
 
-    # ۴. مدیریت فحش عادی و ناموسی
-    elif data in ["panel_fun_named", "panel_fun_normal"]:
-        if int(user_id) != int(OWNER_ID):
-            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+    elif data.startswith("grp_fun_normal:"):
+        cid = int(data.replace("grp_fun_normal:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        fun_type = "named" if data == "panel_fun_named" else "normal"
-        await render_fun_panel(query, fun_type, db)
+        await render_group_fun_panel(query, "normal", cid, db)
         return
 
-    elif data in ["fun_named_add", "fun_normal_add"]:
-        if int(user_id) != int(OWNER_ID):
-            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+    elif data.startswith("grp_fun_add:"):
+        parts = data.split(":")
+        fun_type = parts[1]
+        cid = int(parts[2])
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        fun_type = "named" if data == "fun_named_add" else "normal"
         state_key = "waiting_fun_named_msg" if fun_type == "named" else "waiting_fun_normal_msg"
-        
-        if user_id not in db["states"][state_key]:
-            db["states"][state_key].append(user_id)
-            mark_db_dirty()
-            save_db()
+        db["states"][state_key][str(user_id)] = cid
+        mark_db_dirty()
+        save_db()
 
         title = "ناموسی" if fun_type == "named" else "عادی"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data=f"fun_{fun_type}_done", style="success")]])
-        await query.message.edit_text(f"<b>➕ لطفاً پاسخ‌های فحش {title} را ارسال کنید (پیام، عکس، GIF، ویدیو، Premium Emoji و...):\n\nهر زمان تمام شد دکمه «✅ دان» را بزنید یا /done را ارسال کنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data=f"grp_fun_done:{fun_type}:{cid}", style="success")]])
+        await query.message.edit_text(f"<b>➕ لطفاً پاسخ‌های فحش {title} گروه را ارسال کنید (متن، عکس، GIF، ویدیو و...):\n\nهر زمان تمام شد دکمه «✅ دان» را بزنید یا /done را ارسال کنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
-    elif data in ["fun_named_done", "fun_normal_done"]:
-        fun_type = "named" if data == "fun_named_done" else "normal"
+    elif data.startswith("grp_fun_done:"):
+        parts = data.split(":")
+        fun_type = parts[1]
+        cid = int(parts[2])
         state_key = "waiting_fun_named_msg" if fun_type == "named" else "waiting_fun_normal_msg"
-        if user_id in db["states"][state_key]:
-            db["states"][state_key].remove(user_id)
+        if str(user_id) in db["states"][state_key]:
+            del db["states"][state_key][str(user_id)]
             mark_db_dirty()
             save_db(force=True)
         await query.answer("تنظیم پاسخ‌ها به پایان رسید.", show_alert=True)
-        await render_fun_panel(query, fun_type, db)
+        await render_group_fun_panel(query, fun_type, cid, db)
         return
 
-    elif data in ["fun_named_del_all", "fun_normal_del_all"]:
-        if int(user_id) != int(OWNER_ID):
-            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
+    elif data.startswith("grp_fun_del_all:"):
+        parts = data.split(":")
+        fun_type = parts[1]
+        cid = int(parts[2])
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        fun_type = "named" if data == "fun_named_del_all" else "normal"
         key = "fun_named_responses" if fun_type == "named" else "fun_normal_responses"
-        db[key] = []
+        g_data = get_group_data(db, cid)
+        g_data[key] = []
         mark_db_dirty()
         save_db(force=True)
-        await query.answer("تمام پاسخ‌ها پاک شدند.", show_alert=True)
-        await render_fun_panel(query, fun_type, db)
+        await query.answer("تمام پاسخ‌های این بخش برای گروه شما حذف شد.", show_alert=True)
+        await render_group_fun_panel(query, fun_type, cid, db)
         return
 
-    elif data in ["fun_named_list", "fun_normal_list"]:
-        fun_type = "named" if data == "fun_named_list" else "normal"
+    elif data.startswith("grp_fun_list:"):
+        parts = data.split(":")
+        fun_type = parts[1]
+        cid = int(parts[2])
         key = "fun_named_responses" if fun_type == "named" else "fun_normal_responses"
-        items = db.get(key, [])
-        if not items:
-            await query.answer("هیچ پاسخی ثبت نشده است.", show_alert=True)
-            return
-        await query.answer(f"تعداد {len(items)} پاسخ ثبت گردیده است.", show_alert=True)
+        g_data = get_group_data(db, cid)
+        items = g_data.get(key, [])
+        await query.answer(f"تعداد {len(items)} پاسخ برای این گروه ثبت گردیده است.", show_alert=True)
         return
 
-    # ۵. پنل BROADCAST کاربران
+    # ۶. پنل BROADCAST کاربران
     elif data == "panel_user_broadcast":
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
-        await render_user_broadcast_panel_message(query, db)
+        started_users = db.get("started_users", {})
+        user_count = len(started_users)
+        text = f"📢 <b>پیام همگانی به تمام کاربران خصوصی ربات</b>\n\n👥 <b>تعداد کاربران دریافت‌کننده:</b> <code>{user_count}</code> نفر"
+        buttons = [
+            [InlineKeyboardButton("✉️ ارسال پیام همگانی", callback_data="user_broadcast_send", style="success")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]
+        ]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         return
 
     elif data == "user_broadcast_send":
@@ -1015,150 +1521,183 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         db["states"]["waiting_user_broadcast_msg"] = [user_id]
         mark_db_dirty()
         save_db()
-        await query.message.edit_text(
-            "<b>✉️ پیام مورد نظر برای ارسال به تمام کاربران خصوصی ربات را بفرستید:</b>\n\n"
-            "می‌توانید متن، عکس، GIF، ویدیو، Premium Emoji و... ارسال کنید.\n"
-            "برای لغو دستور /cancel را بزنید.",
-            parse_mode=ParseMode.HTML
-        )
+        await query.message.edit_text("<b>✉️ پیام مورد نظر برای ارسال به تمام کاربران خصوصی ربات را بفرستید:</b>\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
         return
 
-    elif data == "user_broadcast_cancel":
-        if int(user_id) != int(OWNER_ID):
-            await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
-            return
-        BROADCAST_CANCEL_FLAG = True
-        await query.answer("دستور لغو ارسال شد. ارسال پیام متوقف می‌شود...", show_alert=True)
-        return
-
-    # ۶. پنل مدیریت کامنت
-    elif data == "panel_comment":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    # ۷. بخش کامنت گروهی
+    elif data.startswith("panel_comment:"):
+        cid = int(data.replace("panel_comment:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        await render_comment_panel_message(query, chat_id, db)
+        await render_comment_panel_message(query, cid, db)
         return
 
-    elif data == "comment_toggle":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("comment_toggle:"):
+        cid = int(data.replace("comment_toggle:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        chat_id_str = str(chat_id)
-        if "comment_settings" not in db: db["comment_settings"] = {}
-        c_set = db["comment_settings"].setdefault(chat_id_str, {"enabled": False, "custom": False})
+        g_data = get_group_data(db, cid)
+        c_set = g_data.setdefault("comment", {"enabled": False, "custom": False})
         c_set["enabled"] = not c_set.get("enabled", False)
-        
-        log_admin_action(db, user_id, query.from_user.full_name, query.message.chat.title, chat_id, "تغییر کامنت", f"وضعیت کامنت: {c_set['enabled']}")
-        
+        log_admin_action(db, user_id, query.from_user.full_name, g_data.get("title", ""), cid, "تغییر کامنت", f"وضعیت: {c_set['enabled']}")
         mark_db_dirty()
         save_db()
-        await render_comment_panel_message(query, chat_id, db)
+        await render_comment_panel_message(query, cid, db)
         return
 
-    elif data == "comment_set":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("comment_set:"):
+        cid = int(data.replace("comment_set:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        db["states"]["waiting_comment_msg"][user_id] = chat_id
+        db["states"]["waiting_comment_msg"][str(user_id)] = cid
         mark_db_dirty()
         save_db()
-        prompt_text = (
-            "<b>💬 پیام کامنتی که می‌خواهید ربات زیر پست‌های کانال ارسال کند را بفرستید:</b>\n\n"
-            "می‌توانید <b>متن، عکس، GIF، ویدیو، استیکر، صوت یا فایل</b> به همراه Premium Emoji ارسال کنید.\n\n"
-            "برای لغو /cancel را ارسال کنید."
-        )
-        await query.message.edit_text(prompt_text, parse_mode=ParseMode.HTML)
+        await query.message.edit_text("<b>💬 پیام یا مدیایی که می‌خواهید زیر پست‌های کانال قرار گیرد بفرستید:</b>\n\nبرای لغو /cancel را ارسال کنید.", parse_mode=ParseMode.HTML)
         return
 
-    elif data == "comment_delete":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("comment_delete:"):
+        cid = int(data.replace("comment_delete:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        chat_id_str = str(chat_id)
-        if "comment_settings" in db and chat_id_str in db["comment_settings"]:
-            db["comment_settings"][chat_id_str]["custom"] = False
-            db["comment_settings"][chat_id_str].pop("saved_msg_id", None)
-            db["comment_settings"][chat_id_str].pop("saved_from_chat_id", None)
-            mark_db_dirty()
-            save_db()
-        await query.answer("کامنت ذخیره‌شده با موفقیت حذف شد.", show_alert=True)
-        await render_comment_panel_message(query, chat_id, db)
+        g_data = get_group_data(db, cid)
+        g_data["comment"] = {"enabled": False, "custom": False}
+        mark_db_dirty()
+        save_db()
+        await query.answer("کامنت ذخیره‌شده این گروه حذف شد.", show_alert=True)
+        await render_comment_panel_message(query, cid, db)
         return
 
-    # ۷. بخش مدیریت خوش‌آمدگویی
-    elif data == "panel_welcome":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    # ۸. بخش خوش‌آمدگویی گروهی
+    elif data.startswith("panel_welcome:"):
+        cid = int(data.replace("panel_welcome:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        await render_welcome_panel_message(query, chat_id, db)
+        await render_welcome_panel_message(query, cid, db)
         return
 
-    elif data == "welcome_toggle":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("welcome_toggle:"):
+        cid = int(data.replace("welcome_toggle:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        chat_id_str = str(chat_id)
-        if "welcome_settings" not in db: db["welcome_settings"] = {}
-        w_set = db["welcome_settings"].setdefault(chat_id_str, {"enabled": True, "custom": False})
+        g_data = get_group_data(db, cid)
+        w_set = g_data.setdefault("welcome", {"enabled": True, "custom": False})
         w_set["enabled"] = not w_set.get("enabled", True)
-        
-        log_admin_action(db, user_id, query.from_user.full_name, query.message.chat.title, chat_id, "تغییر خوش‌آمدگویی", f"وضعیت Welcome: {w_set['enabled']}")
-
+        log_admin_action(db, user_id, query.from_user.full_name, g_data.get("title", ""), cid, "تغییر Welcome", f"وضعیت: {w_set['enabled']}")
         mark_db_dirty()
         save_db()
-        await render_welcome_panel_message(query, chat_id, db)
+        await render_welcome_panel_message(query, cid, db)
         return
 
-    elif data == "welcome_set":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("welcome_set:"):
+        cid = int(data.replace("welcome_set:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        db["states"]["waiting_welcome_msg"][user_id] = chat_id
+        db["states"]["waiting_welcome_msg"][str(user_id)] = cid
         mark_db_dirty()
         save_db()
         prompt_text = (
-            "<b>👋 تنظیم پیام خوش‌آمدگویی اختصاصی:</b>\n\n"
-            "لطفاً پیام خوش‌آمدگویی جدید را ارسال کنید.\n"
-            "می‌توانید <b>متن، عکس، GIF، ویدیو، فایل یا صوت</b> ارسال کنید.\n\n"
-            "<b>متغیرهای قابل استفاده در متن یا کپشن:</b>\n"
-            "• <code>USERNAME</code> ➔ منشن واقعی کاربر جدید\n"
-            "• <code>XXXX</code> ➔ نام گروه\n"
-            "• <code>TIME</code> ➔ ساعت فعلی\n"
-            "• <code>DAY</code> ➔ روز هفته (فارسی)\n\n"
+            "<b>👋 تنظیم پیام خوش‌آمدگویی اختصاصی گروه:</b>\n\n"
+            "لطفاً پیام یا مدیای خوش‌آمدگویی جدید را ارسال کنید.\n"
+            "متغیرها: <code>USERNAME</code> | <code>XXXX</code> | <code>TIME</code> | <code>DAY</code>\n\n"
             "برای لغو /cancel را ارسال کنید."
         )
         await query.message.edit_text(prompt_text, parse_mode=ParseMode.HTML)
         return
 
-    elif data == "welcome_delete_confirm":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("welcome_delete_confirm:"):
+        cid = int(data.replace("welcome_delete_confirm:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
         kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ بله، حذف شود", callback_data="welcome_delete_do", style="danger"),
-                InlineKeyboardButton("❌ لغو", callback_data="panel_welcome", style="primary")
-            ]
+            [InlineKeyboardButton("✅ بله، حذف شود", callback_data=f"welcome_delete_do:{cid}", style="danger"),
+             InlineKeyboardButton("❌ لغو", callback_data=f"panel_welcome:{cid}", style="primary")]
         ])
-        await query.message.edit_text("<b>آیا از حذف پیام خوش‌آمد اختصاصی و بازگشت به حالت پیش‌فرض اطمینان دارید؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+        await query.message.edit_text("<b>آیا از حذف خوش‌آمد اختصاصی اطمینان دارید؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
-    elif data == "welcome_delete_do":
-        if not await is_admin_or_owner(context, chat_id, user_id):
+    elif data.startswith("welcome_delete_do:"):
+        cid = int(data.replace("welcome_delete_do:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        chat_id_str = str(chat_id)
-        if "welcome_settings" in db and chat_id_str in db["welcome_settings"]:
-            db["welcome_settings"][chat_id_str]["custom"] = False
-            db["welcome_settings"][chat_id_str].pop("saved_msg_id", None)
-            db["welcome_settings"][chat_id_str].pop("saved_from_chat_id", None)
-            mark_db_dirty()
-            save_db()
-        await query.answer("پیام اختصاصی حذف شد و به حالت پیش‌فرض برگشت.", show_alert=True)
-        await render_welcome_panel_message(query, chat_id, db)
+        g_data = get_group_data(db, cid)
+        g_data["welcome"] = {"enabled": True, "custom": False}
+        mark_db_dirty()
+        save_db()
+        await query.answer("پیام اختصاصی حذف شد.", show_alert=True)
+        await render_welcome_panel_message(query, cid, db)
         return
 
-    # ۸. دوز آنلاین
+    # ۹. غذاها و شعرهای گروهی
+    elif data.startswith("panel_foods:"):
+        cid = int(data.replace("panel_foods:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ افزودن غذا", callback_data=f"food_add:{cid}", style="success")],
+            [InlineKeyboardButton("➖ حذف غذا", callback_data=f"food_del:{cid}", style="danger")],
+            [InlineKeyboardButton("📋 لیست غذاها", callback_data=f"panel_list_foods:{cid}", style="primary")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_advanced:{cid}", style="primary")]
+        ])
+        await query.message.edit_text("🍽 <b>مدیریت غذاهای اختصاصی این گروه</b>", reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return
+
+    elif data.startswith("food_add:"):
+        cid = int(data.replace("food_add:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        db["states"]["waiting_add_food"][str(user_id)] = cid
+        mark_db_dirty()
+        save_db()
+        await query.message.edit_text("➕ نام غذایی که می‌خواهید اضافه شود را بنویسید:\n\nبرای لغو /cancel را بزنید.")
+        return
+
+    elif data.startswith("food_del:"):
+        cid = int(data.replace("food_del:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        db["states"]["waiting_del_food"][str(user_id)] = cid
+        mark_db_dirty()
+        save_db()
+        await query.message.edit_text("➖ نام دقیق غذایی که می‌خواهید حذف شود را بنویسید:\n\nبرای لغو /cancel را بزنید.")
+        return
+
+    elif data.startswith("panel_poem_names:"):
+        cid = int(data.replace("panel_poem_names:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        db["states"]["waiting_poem_names"][str(user_id)] = cid
+        mark_db_dirty()
+        save_db()
+        g_data = get_group_data(db, cid)
+        current_names = ", ".join(g_data.get("custom_names", [])) or "هیچ اسمی ثبت نشده"
+        await query.message.edit_text(f"📜 <b>اسامی فعلی شعرها در این گروه:</b>\n{current_names}\n\nاسامی جدید را یکی‌یکی بفرستید و در پایان /done یا دکمه را بزنید.", parse_mode=ParseMode.HTML)
+        return
+
+    elif data.startswith("panel_add_poem:"):
+        cid = int(data.replace("panel_add_poem:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        db["states"]["waiting_add_poem"][str(user_id)] = cid
+        mark_db_dirty()
+        save_db()
+        await query.message.edit_text("➕ شعر جدید را با <code>{name}</code> یا <code>یوزرنیم</code> بفرستید:\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
+        return
+
+    # ۱۰. دوز آنلاین
     elif data.startswith("xo_"):
         parts = data.split(":")
         act = parts[0]
@@ -1199,7 +1738,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             save_db()
 
             m1_txt = get_user_mention(game["p1_id"], game["p1_name"]) if game.get("p1_id") else ""
-
             if m1_txt:
                 txt = (
                     '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
@@ -1392,7 +1930,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     pass
                 return
 
-    # ۹. سیستم گزارش
+    # ۱۱. سیستم گزارش
     elif data.startswith("report_"):
         rep_id = data.replace("report_resolve:", "").replace("report_cancel:", "")
         reports = db.get("reports", {})
@@ -1407,11 +1945,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             if user_id != rep["reporter_id"]:
                 await query.answer("فقط فرد گزارش‌دهنده می‌تواند این گزارش را لغو کند!", show_alert=True)
                 return
-            
             del reports[rep_id]
             mark_db_dirty()
             save_db()
-
             txt = '<b><tg-emoji emoji-id="5829923384217050622">❓</tg-emoji> گزارش شما لغو گردید.</b>'
             await query.message.edit_text(txt, parse_mode=ParseMode.HTML)
             return
@@ -1420,17 +1956,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             if not await is_admin_or_owner(context, query.message.chat.id, user_id):
                 await query.answer("فقط مدیران گروه می‌توانند گزارش را بررسی کنند!", show_alert=True)
                 return
-
             del reports[rep_id]
             mark_db_dirty()
             save_db()
-
             txt = '<b><tg-emoji emoji-id="5830144944399981619">✅</tg-emoji> گزارش شما توسط مدیران بررسی شد.</b>'
             await query.message.edit_text(txt, parse_mode=ParseMode.HTML)
             return
 
-    # ۱۰. امضای شاهدان
-    if data.startswith("sign_action:"):
+    # ۱۲. امضای اتهامات
+    elif data.startswith("sign_action:"):
         rec_id = data.replace("sign_action:", "")
         records = db.get("action_records", {})
         
@@ -1483,20 +2017,19 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
-    # ۱۱. مشاهده آمار تک‌موردی
     elif data.startswith("stat_action:"):
         rec_id = data.replace("stat_action:", "")
         records = db.get("action_records", {})
         if rec_id in records:
             rec = records[rec_id]
             current_count = get_user_stat(db, rec["target_id"], rec["stat_key"])
-            alert_msg = f"📊 آمار ثبت‌شده {rec['action_title']} برای {rec['target_name']} در این گروه: {current_count} بار"
+            alert_msg = f"📊 آمار ثبت‌شده {rec['action_title']} برای {rec['target_name']}: {current_count} بار"
             await query.answer(alert_msg, show_alert=True)
         else:
             await query.answer("اطلاعات یافت نشد!", show_alert=True)
         return
 
-    # ۱۲. کاپل
+    # ۱۳. کاپل / شیپ
     elif data in ["couple_agree", "couple_disagree"]:
         msg_id = str(query.message.message_id)
         couples = db.get("couples", {})
@@ -1568,95 +2101,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
-    elif data == "panel_broadcast":
-        if int(user_id) != int(OWNER_ID):
-            await query.answer("این بخش فقط برای مالک اصلی ربات می‌باشد.", show_alert=True)
-            return
-        
-        active_chats = db.get("active_chats", [])
-        if not active_chats:
-            await query.answer("هیچ گروه فعالی یافت نشد!", show_alert=True)
-            return
-
-        buttons = []
-        for cid in active_chats:
-            try:
-                chat_obj = await context.bot.get_chat(cid)
-                title = chat_obj.title or str(cid)
-                buttons.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"bcast_chat:{cid}", style="primary")])
-            except Exception:
-                pass
-        buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")])
-        await query.message.edit_text("📢 <b>انتخاب گروه جهت ارسال پیام همگانی:</b>", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-        return
-
-    elif data.startswith("bcast_chat:"):
-        if int(user_id) != int(OWNER_ID):
-            await query.answer("این بخش فقط برای مالک اصلی ربات می‌باشد.", show_alert=True)
-            return
-        target_cid = data.replace("bcast_chat:", "")
-        db["states"]["waiting_broadcast_msg"][user_id] = int(target_cid)
-        mark_db_dirty()
-        save_db()
-        await query.message.edit_text("✉️ لطفاً پیام خود را جهت ارسال به این گروه بفرستید (از BOLD و ایموجی پشتیبانی می‌شود):\n\nبرای لغو /cancel را بزنید.")
-        return
-
-    if data == "noop":
-        await query.answer()
-        return
-
-    if data == "panel_owner_main":
+    # ۱۴. تنظیمات عمومی مالک
+    elif data == "panel_owner_main":
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         await edit_owner_panel_message(query)
         return
 
-    if data == "panel_admin_main":
-        if not await is_admin_or_owner(context, chat_id, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        await render_group_admin_panel_message(query)
-        return
-
-    if data == "panel_media_lef":
+    elif data == "panel_admin_logs":
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
-        if user_id not in db["states"]["waiting_lef_media"]:
-            db["states"]["waiting_lef_media"].append(user_id)
-            mark_db_dirty()
-            save_db()
-        await query.message.edit_text("🖼 لطفاً رسانه مورد نظر را ارسال کنید.\n\nبرای لغو /cancel را بزنید.")
-    elif data == "panel_foods":
-        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ افزودن غذا", callback_data="food_add", style="success")],
-            [InlineKeyboardButton("➖ حذف غذا", callback_data="food_del", style="danger")],
-            [InlineKeyboardButton("📋 لیست غذاها", callback_data="food_page_1", style="primary")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_group_advanced", style="primary")]
-        ])
-        await query.message.edit_text("🍽 <b>مدیریت غذاها</b>\n\nگزینه مورد نظر را انتخاب کنید:", reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    elif data == "food_add":
-        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        if user_id not in db["states"]["waiting_add_food"]:
-            db["states"]["waiting_add_food"].append(user_id)
-            mark_db_dirty()
-            save_db()
-        await query.message.edit_text("➕ نام غذایی که می‌خواهید اضافه شود را بنویسید:\n\nبرای لغو /cancel را بزنید.")
-    elif data == "food_del":
-        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        if user_id not in db["states"]["waiting_del_food"]:
-            db["states"]["waiting_del_food"].append(user_id)
-            mark_db_dirty()
-            save_db()
-        await query.message.edit_text("➖ نام دقیق غذایی که می‌خواهید حذف شود را بنویسید:\n\nبرای لغو /cancel را بزنید.")
+        await render_admin_logs_panel(query, db)
+        return
+
     elif data == "panel_cooldown":
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
@@ -1665,31 +2124,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             db["states"]["waiting_cooldown"].append(user_id)
             mark_db_dirty()
             save_db()
-        await query.message.edit_text(f"⏱ زمان فعلی محدودیت (Cooldown): <b>{db.get('cooldown_minutes', 10)} دقیقه</b>\n\nلطفاً زمان جدید را به دقیقه (عدد انگلیسی) وارد کنید:\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
-    elif data == "panel_poem_names":
-        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        if user_id not in db["states"]["waiting_poem_names"]:
-            db["states"]["waiting_poem_names"].append(user_id)
-            mark_db_dirty()
-            save_db()
-        current_names = ", ".join(db.get("custom_names", [])) or "هیچ اسمی ثبت نشده"
-        await query.message.edit_text(f"📜 <b>اسامی فعلی برای شعرها:</b>\n{current_names}\n\nلطفاً اسامی جدید را یکی‌یکی بفرستید. وقتی تمام شد دستور <code>/done</code> را ارسال کنید.\nبرای لغو دستور /cancel را بزنید.", parse_mode=ParseMode.HTML)
-    elif data == "panel_add_poem":
-        if not await is_admin_or_owner(context, update.effective_chat.id if update.effective_chat else 0, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        if user_id not in db["states"]["waiting_add_poem"]:
-            db["states"]["waiting_add_poem"].append(user_id)
-            mark_db_dirty()
-            save_db()
-        await query.message.edit_text("➕ لطفاً شعر جدید را بفرستید. می‌تونید از کلمه <code>یوزرنیم</code> یا <code>{name}</code> برای جای‌گذاری اسم استفاده کنید:\nمثال: <code>یوزرنیم خواست منو خراب کنه بردن خرابه کردنش</code>\n\nبرای لغو /cancel را بزنید.", parse_mode=ParseMode.HTML)
+        await query.message.edit_text(f"⏱ زمان فعلی محدودیت: <b>{db.get('cooldown_minutes', 10)} دقیقه</b>\n\nزمان جدید را به دقیقه ارسال کنید:", parse_mode=ParseMode.HTML)
+        return
+
     elif data == "panel_features":
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         await render_features_panel_message(query, db)
+        return
+
     elif data.startswith("toggle_"):
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
@@ -1700,6 +2144,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             mark_db_dirty()
             save_db()
         await render_features_panel_message(query, db)
+        return
 
     await query.answer()
 
@@ -1750,21 +2195,13 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-
     user_id = update.effective_user.id
-    logger.info(f"/panel received from user_id={user_id}, OWNER_ID={OWNER_ID}")
-
     if int(user_id) != int(OWNER_ID):
-        logger.warning(f"Unauthorized /panel attempt by user_id={user_id}")
-        await update.message.reply_text(
-            "❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!"
-        )
+        await update.message.reply_text("❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!")
         return
-
-    logger.info("OWNER AUTH PASSED - SENDING OWNER PANEL")
     try:
         await send_owner_panel_message(update, context)
-    except Exception as e:
+    except Exception:
         logger.exception("OWNER PANEL ERROR:")
 
 async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1777,18 +2214,25 @@ async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ شما دسترسی مدیریت این گروه را ندارید.")
         return
 
+    db = load_db()
+    g_data = get_group_data(db, chat_id)
+    title = html.escape(g_data.get("title") or "این گروه")
     text = (
-        "<b>🛠 پنل مدیریت گروه</b>\n\n"
+        f"<b>🛠 پنل مدیریت اختصاصی گروه: {title}</b>\n\n"
         "سلام عزیزم، به پنل مدیریت گروه خوش اومدی! 👋\n\n"
         "از طریق دکمه‌های زیر می‌تونی تنظیمات گروه رو مدیریت کنی."
     )
     buttons = [
         [
-            InlineKeyboardButton("🔒 قفل ها", callback_data="panel_group_locks", style="primary"),
-            InlineKeyboardButton("📋 لیست ها", callback_data="panel_group_lists", style="primary")
+            InlineKeyboardButton("🔒 قفل ها", callback_data=f"panel_group_locks:{chat_id}", style="primary"),
+            InlineKeyboardButton("📋 لیست ها", callback_data=f"panel_group_lists:{chat_id}", style="primary")
         ],
         [
-            InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data="panel_group_advanced", style="primary")
+            InlineKeyboardButton("😈 تنظیم فحش ناموسی", callback_data=f"grp_fun_named:{chat_id}", style="danger"),
+            InlineKeyboardButton("😂 تنظیم فحش عادی", callback_data=f"grp_fun_normal:{chat_id}", style="primary")
+        ],
+        [
+            InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data=f"panel_group_advanced:{chat_id}", style="primary")
         ],
         [
             InlineKeyboardButton("🔙 بستن", callback_data="panel_group_close", style="danger")
@@ -1800,71 +2244,70 @@ async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def command_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-    user_id = update.effective_user.id
+    user_id = str(update.effective_user.id)
+    u_int = update.effective_user.id
     db = load_db()
     
-    cancelled = False
     states = db.get("states", {})
-    for k in ["waiting_lef_media", "waiting_add_food", "waiting_del_food", "waiting_cooldown", "waiting_poem_names", "waiting_add_poem", "waiting_fun_named_msg", "waiting_fun_normal_msg"]:
-        if user_id in states.get(k, []):
-            states[k].remove(user_id)
+    cancelled = False
+
+    for dict_key in ["waiting_lef_media", "waiting_add_food", "waiting_del_food", 
+                     "waiting_poem_names", "waiting_add_poem", "waiting_broadcast_msg", 
+                     "waiting_welcome_msg", "waiting_comment_msg", "waiting_fun_named_msg", 
+                     "waiting_fun_normal_msg", "waiting_search_query", "broadcast_builder"]:
+        if user_id in states.get(dict_key, {}):
+            del states[dict_key][user_id]
             cancelled = True
-            
-    if user_id in states.get("waiting_broadcast_msg", {}):
-        del states["waiting_broadcast_msg"][user_id]
-        cancelled = True
 
-    if user_id in states.get("waiting_welcome_msg", {}):
-        del states["waiting_welcome_msg"][user_id]
-        cancelled = True
-
-    if user_id in states.get("waiting_comment_msg", {}):
-        del states["waiting_comment_msg"][user_id]
-        cancelled = True
-
-    if user_id in states.get("waiting_user_broadcast_msg", []):
-        states["waiting_user_broadcast_msg"].remove(user_id)
-        cancelled = True
+    for list_key in ["waiting_cooldown", "waiting_user_broadcast_msg"]:
+        if u_int in states.get(list_key, []):
+            states[list_key].remove(u_int)
+            cancelled = True
 
     if cancelled:
         mark_db_dirty()
         save_db(force=True)
-        await update.message.reply_text("🚫 عملیات لغو شد.")
+        await update.message.reply_text("🚫 عملیات در حال اجرا لغو گردید.")
     else:
         await update.message.reply_text("ℹ️ شما در هیچ حالت انتظاری قرار ندارید.")
 
 async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-    user_id = update.effective_user.id
+    user_id = str(update.effective_user.id)
     db = load_db()
-    
     states = db.get("states", {})
     done_anything = False
 
-    if user_id in states.get("waiting_poem_names", []):
-        states["waiting_poem_names"].remove(user_id)
-        count = len(db.get("custom_names", []))
-        await update.message.reply_text(f"✅ تنظیم اسامی به پایان رسید. تعداد کل اسامی ثبت‌شده: <b>{count}</b>", parse_mode=ParseMode.HTML)
+    if user_id in states.get("waiting_poem_names", {}):
+        cid = states["waiting_poem_names"][user_id]
+        del states["waiting_poem_names"][user_id]
+        g_data = get_group_data(db, cid)
+        count = len(g_data.get("custom_names", []))
+        await update.message.reply_text(f"✅ تنظیم اسامی به پایان رسید. تعداد کل: <b>{count}</b>", parse_mode=ParseMode.HTML)
         done_anything = True
 
-    if user_id in states.get("waiting_fun_named_msg", []):
-        states["waiting_fun_named_msg"].remove(user_id)
-        count = len(db.get("fun_named_responses", []))
-        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش ناموسی پایان یافت. تعداد کل: <b>{count}</b>", parse_mode=ParseMode.HTML)
+    if user_id in states.get("waiting_fun_named_msg", {}):
+        cid = states["waiting_fun_named_msg"][user_id]
+        del states["waiting_fun_named_msg"][user_id]
+        g_data = get_group_data(db, cid)
+        count = len(g_data.get("fun_named_responses", []))
+        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش ناموسی این گروه پایان یافت. تعداد: <b>{count}</b>", parse_mode=ParseMode.HTML)
         done_anything = True
 
-    if user_id in states.get("waiting_fun_normal_msg", []):
-        states["waiting_fun_normal_msg"].remove(user_id)
-        count = len(db.get("fun_normal_responses", []))
-        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش عادی پایان یافت. تعداد کل: <b>{count}</b>", parse_mode=ParseMode.HTML)
+    if user_id in states.get("waiting_fun_normal_msg", {}):
+        cid = states["waiting_fun_normal_msg"][user_id]
+        del states["waiting_fun_normal_msg"][user_id]
+        g_data = get_group_data(db, cid)
+        count = len(g_data.get("fun_normal_responses", []))
+        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش عادی این گروه پایان یافت. تعداد: <b>{count}</b>", parse_mode=ParseMode.HTML)
         done_anything = True
 
     if done_anything:
         mark_db_dirty()
         save_db(force=True)
     else:
-        await update.message.reply_text("ℹ️ شما در هیچ حالت انتظاری قرار ندارید.")
+        await update.message.reply_text("ℹ️ شما در هیچ وضعیت انتظاری نیستید.")
 
 # ==========================================
 # MESSAGE HANDLER
@@ -1882,8 +2325,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             setup_chat_jobs(context.job_queue, [update.effective_chat.id])
 
         user_id = update.effective_user.id
+        u_str = str(user_id)
         chat_id = update.effective_chat.id
-        raw_text = update.message.text or ""
+        raw_text = update.message.text or update.message.caption or ""
         clean_raw = raw_text.strip().lower()
         norm_text = normalize_text(raw_text)
 
@@ -1898,12 +2342,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             count_str = match_cleanup.group("count")
             if not count_str or not count_str.isdigit() or int(count_str) <= 0:
-                await update.message.reply_text("<b>فرمت دستور پاکسازی اشتباه است!\nمثال صحیح: <code>حذف 20</code></b>", parse_mode=ParseMode.HTML)
+                await update.message.reply_text("<b>فرمت دستور پاکسازی اشتباه است!\nمثال: <code>حذف 20</code></b>", parse_mode=ParseMode.HTML)
                 return
 
             req_count = int(count_str)
             target_msg_id = update.message.message_id
-            
             deleted_count = 0
             try:
                 try:
@@ -1929,23 +2372,18 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         break
 
                 log_admin_action(db, user_id, update.effective_user.full_name, update.effective_chat.title, chat_id, "پاکسازی", f"پاکسازی {deleted_count} پیام اخیر")
-
-                success_msg = f"<b>پاکسازی {deleted_count} پیام اخیر با موفقیت انجام شد! <tg-emoji emoji-id=\"5206607081334906820\">✔️</tg-emoji></b>"
-                confirm_msg = await context.bot.send_message(chat_id=chat_id, text=success_msg, parse_mode=ParseMode.HTML)
-                
+                confirm_msg = await context.bot.send_message(chat_id=chat_id, text=f"<b>پاکسازی {deleted_count} پیام اخیر انجام شد! ✔️</b>", parse_mode=ParseMode.HTML)
                 await asyncio.sleep(5)
                 try:
                     await context.bot.delete_message(chat_id=chat_id, message_id=confirm_msg.message_id)
                 except Exception:
                     pass
-
             except Exception as e:
                 logger.error(f"Cleanup Error: {e}")
-                await update.message.reply_text("خطا در انجام پاکسازی. مطمئن شوید ربات دسترسی حذف پیام دارد.")
             return
 
         # --------------------------------------
-        # HANDLER FUN COMMANDS: «ناموسی بده» & «فحش بده»
+        # HANDLER FUN COMMANDS: «ناموسی بده» & «فحش بده» (Group-Isolated)
         # --------------------------------------
         match_fun_named = FUN_NAMED_PATTERN.match(raw_text)
         match_fun_normal = FUN_NORMAL_PATTERN.match(raw_text)
@@ -1958,47 +2396,32 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             req_cnt = min(req_cnt, MAX_FUN_MESSAGES)
 
             if update.message.reply_to_message and update.message.reply_to_message.from_user and update.message.reply_to_message.from_user.id == context.bot.id:
-                await update.message.reply_text(
-                    '<b>منظورت چیه؟ <tg-emoji emoji-id="5829923384217050622">❓</tg-emoji></b>',
-                    parse_mode=ParseMode.HTML
-                )
+                await update.message.reply_text('<b>منظورت چیه؟ <tg-emoji emoji-id="5829923384217050622">❓</tg-emoji></b>', parse_mode=ParseMode.HTML)
                 return
 
+            g_data = get_group_data(db, chat_id)
             key = "fun_named_responses" if is_named else "fun_normal_responses"
-            responses_list = db.get(key, [])
+            responses_list = g_data.get(key, [])
 
             if not responses_list:
                 title = "ناموسی" if is_named else "عادی"
-                await update.message.reply_text(f"<b>هنوز هیچ پاسخ فحش {title} توسط مالک ثبت نشده است!</b>", parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f"<b>هنوز هیچ پاسخ فحش {title} برای این گروه ثبت نشده است!</b>", parse_mode=ParseMode.HTML)
                 return
 
             target_msg_id = update.message.reply_to_message.message_id if update.message.reply_to_message else None
-
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
             except Exception:
                 pass
 
             for _ in range(req_cnt):
-                resp_item = random.choice(responses_list)
-                f_chat_id = resp_item.get("from_chat_id")
-                f_msg_id = resp_item.get("msg_id")
-
-                try:
-                    await context.bot.copy_message(
-                        chat_id=chat_id,
-                        from_chat_id=f_chat_id,
-                        message_id=f_msg_id,
-                        reply_to_message_id=target_msg_id
-                    )
-                    await asyncio.sleep(0.3)
-                except Exception as e:
-                    logger.error(f"Error sending fun response: {e}")
-                    break
+                resp_payload = random.choice(responses_list)
+                await send_media_payload(context.bot, chat_id, resp_payload, reply_to_message_id=target_msg_id)
+                await asyncio.sleep(0.3)
             return
 
         # --------------------------------------
-        # HANDLER PIN / UNPIN COMMANDS (ADMIN ONLY)
+        # HANDLER PIN / UNPIN COMMANDS
         # --------------------------------------
         if clean_raw in PIN_PATTERNS or clean_raw in UNPIN_PATTERNS:
             if not await is_admin_or_owner(context, chat_id, user_id):
@@ -2010,343 +2433,314 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             target_msg_id = update.message.reply_to_message.message_id
-
             if clean_raw in PIN_PATTERNS:
                 try:
                     await context.bot.pin_chat_message(chat_id=chat_id, message_id=target_msg_id)
                     log_admin_action(db, user_id, update.effective_user.full_name, update.effective_chat.title, chat_id, "پین پیام", f"Message ID: {target_msg_id}")
-                    await update.message.reply_text(
-                        '<b>پیامتو پین کردم عزیزم! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>',
-                        parse_mode=ParseMode.HTML
-                    )
-                except Exception as e:
-                    logger.error(f"Pin Error: {e}")
+                    await update.message.reply_text('<b>پیامتو پین کردم عزیزم! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>', parse_mode=ParseMode.HTML)
+                except Exception:
                     await update.message.reply_text("ربات دسترسی سنجاق کردن پیام‌ها را ندارد.")
                 return
-
             elif clean_raw in UNPIN_PATTERNS:
                 try:
                     await context.bot.unpin_chat_message(chat_id=chat_id, message_id=target_msg_id)
                     log_admin_action(db, user_id, update.effective_user.full_name, update.effective_chat.title, chat_id, "آن‌پین پیام", f"Message ID: {target_msg_id}")
-                    await update.message.reply_text(
-                        '<b>پیامو از پین دراوردم رفیق! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>',
-                        parse_mode=ParseMode.HTML
-                    )
-                except Exception as e:
-                    logger.error(f"Unpin Error: {e}")
+                    await update.message.reply_text('<b>پیامو از پین دراوردم رفیق! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>', parse_mode=ParseMode.HTML)
+                except Exception:
                     await update.message.reply_text("ربات دسترسی تغییر پیام‌های سنجاق‌شده را ندارد.")
                 return
 
         # --------------------------------------
-        # COMMAND 'کامنت روشن' / 'گودی کامنت روشن'
+        # COMMAND 'کامنت روشن' & 'پنل'
         # --------------------------------------
         if clean_raw in ["کامنت روشن", "گودی کامنت روشن"]:
             if not await is_admin_or_owner(context, chat_id, user_id):
                 await update.message.reply_text("❌ فقط مدیران گروه دسترسی به این دستور را دارند.")
                 return
-
-            chat_id_str = str(chat_id)
-            if "comment_settings" not in db: db["comment_settings"] = {}
-            c_set = db["comment_settings"].setdefault(chat_id_str, {"enabled": False, "custom": False})
+            g_data = get_group_data(db, chat_id)
+            c_set = g_data.setdefault("comment", {"enabled": False, "custom": False})
             c_set["enabled"] = True
             mark_db_dirty()
             save_db(force=True)
-
-            await update.message.reply_text("✅ <b>سیستم کامنت اتوماتیک کانال برای این گروه فعال شد.</b>", parse_mode=ParseMode.HTML)
+            await update.message.reply_text("✅ <b>سیستم کامنت اتوماتیک برای این گروه فعال شد.</b>", parse_mode=ParseMode.HTML)
             return
 
-        # --------------------------------------
-        # TEXT COMMAND 'پنل'
-        # --------------------------------------
         if clean_raw in ["پنل", "admin", "/admin"] and await is_admin_or_owner(context, chat_id, user_id):
             await command_admin_panel(update, context)
             return
 
         # --------------------------------------
-        # ADMIN & OWNER WAITING STATES
+        # OWNER / ADMIN WAITING STATES
         # --------------------------------------
-        if await is_admin_or_owner(context, chat_id, user_id):
-            if user_id in db["states"].get("waiting_fun_named_msg", []) and int(user_id) == int(OWNER_ID):
-                named_list = db.setdefault("fun_named_responses", [])
-                named_list.append({
-                    "msg_id": update.message.message_id,
-                    "from_chat_id": update.message.chat_id
-                })
-                mark_db_dirty()
-                save_db(force=True)
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data="fun_named_done", style="success")]])
-                await update.message.reply_text(f"✅ <b>پاسخ فحش ناموسی ذخیره شد (تعداد کل: {len(named_list)}). پاسخ بعدی را بفرستید یا «✅ دان» را بزنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
-                return
+        # Search Messages Handler
+        if u_str in db["states"].get("waiting_search_query", {}) and int(user_id) == int(OWNER_ID):
+            target_cid = db["states"]["waiting_search_query"][u_str]
+            del db["states"]["waiting_search_query"][u_str]
+            mark_db_dirty()
+            save_db()
 
-            if user_id in db["states"].get("waiting_fun_normal_msg", []) and int(user_id) == int(OWNER_ID):
-                normal_list = db.setdefault("fun_normal_responses", [])
-                normal_list.append({
-                    "msg_id": update.message.message_id,
-                    "from_chat_id": update.message.chat_id
-                })
-                mark_db_dirty()
-                save_db(force=True)
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data="fun_normal_done", style="success")]])
-                await update.message.reply_text(f"✅ <b>پاسخ فحش عادی ذخیره شد (تعداد کل: {len(normal_list)}). پاسخ بعدی را بفرستید یا «✅ دان» را بزنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
-                return
+            query_word = raw_text.strip().lower()
+            g_data = get_group_data(db, target_cid)
+            m_logs = g_data.get("message_logs", [])
+            matches = [m for m in m_logs if query_word in m.get("text", "").lower()]
 
-            if user_id in db["states"].get("waiting_user_broadcast_msg", []) and int(user_id) == int(OWNER_ID):
-                db["states"]["waiting_user_broadcast_msg"].remove(user_id)
-                mark_db_dirty()
-                save_db(force=True)
+            report_lines = [
+                "SEARCH REPORT",
+                "=============",
+                f"Group: {g_data.get('title', 'Unknown')}",
+                f"Chat ID: {target_cid}",
+                f"Query: {query_word}",
+                f"Total Matched: {len(matches)}",
+                "",
+                "RESULTS",
+                "======="
+            ]
 
-                started_users = db.get("started_users", {})
-                total_users = len(started_users)
+            for idx, m in enumerate(matches, 1):
+                report_lines.append(f"{idx}.")
+                report_lines.append(f"Message ID: {m['message_id']}")
+                report_lines.append(f"User: {m['user_name']}")
+                report_lines.append(f"User ID: {m['user_id']}")
+                report_lines.append(f"Date: {m['date']}")
+                report_lines.append(f"Text: {m['text']}")
+                if m.get("media_type") != "text":
+                    report_lines.append(f"Media Type: {m['media_type']}")
+                    report_lines.append(f"File ID: {m.get('file_id')}")
+                report_lines.append("")
 
-                if total_users == 0:
-                    await update.message.reply_text("❌ هیچ کاربری یافت نشد.")
+            report_content = "\n".join(report_lines)
+            file_bytes = io.BytesIO(report_content.encode("utf-8"))
+            file_bytes.name = f"search_{target_cid}.txt"
+            await update.message.reply_document(document=file_bytes, caption=f"🔎 نتایج جستجوی <code>{query_word}</code> در تاریخچه ثبت‌شده گروه", parse_mode=ParseMode.HTML)
+            return
+
+        # Broadcast Builder Step
+        if u_str in db["states"].get("broadcast_builder", {}) and int(user_id) == int(OWNER_ID):
+            builder = db["states"]["broadcast_builder"][u_str]
+            mode = builder.get("mode")
+
+            if mode == "media":
+                payload = extract_media_payload(update.message)
+                if payload:
+                    builder["type"] = "media"
+                    builder["payload"] = payload
+                    kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ تأیید و ارسال همگانی", callback_data="bcast_confirm_send", style="success")],
+                        [InlineKeyboardButton("❌ لغو", callback_data="bcast_cancel", style="danger")]
+                    ])
+                    await update.message.reply_text("📢 <b>پیش‌نمایش مدیا دریافت شد. آیا برای ارسال تأیید می‌کنید؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
                     return
 
-                status_msg = await update.message.reply_text(f"⏳ <b>شروع ارسال پیام همگانی به {total_users} کاربر...</b>", parse_mode=ParseMode.HTML)
+            elif mode in ["poll", "quiz"]:
+                lines = [l.strip() for l in raw_text.strip().split("\n") if l.strip()]
+                if len(lines) < 3:
+                    await update.message.reply_text("❌ حداقل سؤال و ۲ گزینه الزامی است.")
+                    return
 
-                success_count = 0
-                failed_count = 0
-                blocked_count = 0
-                BROADCAST_CANCEL_FLAG = False
+                question = lines[0]
+                correct_id = 0
+                if mode == "quiz":
+                    last_line = lines[-1]
+                    if "صحیح:" in last_line:
+                        try:
+                            correct_id = int(last_line.replace("صحیح:", "").strip()) - 1
+                            options = lines[1:-1]
+                        except Exception:
+                            options = lines[1:]
+                    else:
+                        options = lines[1:]
+                else:
+                    options = lines[1:]
 
-                for uid_str, u_data in list(started_users.items()):
-                    if BROADCAST_CANCEL_FLAG:
-                        break
+                builder["type"] = "poll"
+                builder["poll_data"] = {
+                    "question": question,
+                    "options": options,
+                    "is_anonymous": True,
+                    "is_quiz": (mode == "quiz"),
+                    "correct_option_id": correct_id if mode == "quiz" else None
+                }
 
-                    target_uid = u_data["user_id"]
-                    try:
-                        await context.bot.copy_message(
-                            chat_id=target_uid,
-                            from_chat_id=update.message.chat_id,
-                            message_id=update.message.message_id
-                        )
-                        success_count += 1
-                        await asyncio.sleep(0.05)
-                    except Exception as e:
-                        err_str = str(e).lower()
-                        if "blocked" in err_str or "user is declassified" in err_str or "chat not found" in err_str:
-                            blocked_count += 1
-                        else:
-                            failed_count += 1
-
-                report_text = (
-                    f"📢 <b>عملیات ارسال پیام همگانی پایان یافت.</b>\n\n"
-                    f"👥 <b>کل کاربران:</b> {total_users}\n"
-                    f"✅ <b>ارسال موفق:</b> {success_count}\n"
-                    f"❌ <b>ناموفق:</b> {failed_count}\n"
-                    f"🚫 <b>بلاک / لغو شده:</b> {blocked_count}"
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ تأیید و ارسال به همه", callback_data="bcast_confirm_send", style="success")],
+                    [InlineKeyboardButton("❌ لغو", callback_data="bcast_cancel", style="danger")]
+                ])
+                await context.bot.send_poll(
+                    chat_id=update.effective_chat.id,
+                    question=question,
+                    options=options,
+                    type=PollType.QUIZ if mode == "quiz" else PollType.REGULAR,
+                    correct_option_id=correct_id if mode == "quiz" else None
                 )
-                try:
-                    await status_msg.edit_text(report_text, parse_mode=ParseMode.HTML)
-                except Exception:
-                    await update.message.reply_text(report_text, parse_mode=ParseMode.HTML)
+                await update.message.reply_text("📊 <b>پیش‌نمایش نظرسنجی بالا را مشاهده می‌کنید. تأیید برای ارسال همگانی؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
                 return
 
-            if user_id in db["states"].get("waiting_comment_msg", {}):
-                target_chat_id = db["states"]["waiting_comment_msg"][user_id]
-                del db["states"]["waiting_comment_msg"][user_id]
+        # Fun responses adding states
+        if u_str in db["states"].get("waiting_fun_named_msg", {}):
+            target_cid = db["states"]["waiting_fun_named_msg"][u_str]
+            if await is_admin_or_owner(context, target_cid, user_id):
+                payload = extract_media_payload(update.message)
+                if payload:
+                    g_data = get_group_data(db, target_cid)
+                    named_list = g_data.setdefault("fun_named_responses", [])
+                    named_list.append(payload)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data=f"grp_fun_done:named:{target_cid}", style="success")]])
+                    await update.message.reply_text(f"✅ پاسخ فحش ناموسی این گروه ذخیره شد (کل: {len(named_list)}).", reply_markup=kb, parse_mode=ParseMode.HTML)
+                    return
 
-                chat_id_str = str(target_chat_id)
-                if "comment_settings" not in db: db["comment_settings"] = {}
-                
-                db["comment_settings"][chat_id_str] = {
-                    "enabled": True,
-                    "custom": True,
-                    "saved_msg_id": update.message.message_id,
-                    "saved_from_chat_id": update.message.chat_id
-                }
+        if u_str in db["states"].get("waiting_fun_normal_msg", {}):
+            target_cid = db["states"]["waiting_fun_normal_msg"][u_str]
+            if await is_admin_or_owner(context, target_cid, user_id):
+                payload = extract_media_payload(update.message)
+                if payload:
+                    g_data = get_group_data(db, target_cid)
+                    norm_list = g_data.setdefault("fun_normal_responses", [])
+                    norm_list.append(payload)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data=f"grp_fun_done:normal:{target_cid}", style="success")]])
+                    await update.message.reply_text(f"✅ پاسخ فحش عادی این گروه ذخیره شد (کل: {len(norm_list)}).", reply_markup=kb, parse_mode=ParseMode.HTML)
+                    return
+
+        # Welcome and Comment Media Set States
+        if u_str in db["states"].get("waiting_welcome_msg", {}):
+            target_cid = db["states"]["waiting_welcome_msg"][u_str]
+            if await is_admin_or_owner(context, target_cid, user_id):
+                del db["states"]["waiting_welcome_msg"][u_str]
+                payload = extract_media_payload(update.message)
+                if payload:
+                    g_data = get_group_data(db, target_cid)
+                    g_data["welcome"] = {"enabled": True, "custom": True, "payload": payload}
+                    mark_db_dirty()
+                    save_db(force=True)
+                    await update.message.reply_text("✅ <b>پیام و مدیای خوش‌آمدگویی اختصاصی این گروه ذخیره شد!</b>", parse_mode=ParseMode.HTML)
+                    return
+
+        if u_str in db["states"].get("waiting_comment_msg", {}):
+            target_cid = db["states"]["waiting_comment_msg"][u_str]
+            if await is_admin_or_owner(context, target_cid, user_id):
+                del db["states"]["waiting_comment_msg"][u_str]
+                payload = extract_media_payload(update.message)
+                if payload:
+                    g_data = get_group_data(db, target_cid)
+                    g_data["comment"] = {"enabled": True, "custom": True, "payload": payload}
+                    mark_db_dirty()
+                    save_db(force=True)
+                    await update.message.reply_text("✅ <b>کامنت اتوماتیک اختصاصی این گروه با مدیا ذخیره شد!</b>", parse_mode=ParseMode.HTML)
+                    return
+
+        # Foods and Poems state
+        if u_str in db["states"].get("waiting_add_food", []):
+            target_cid = db["states"]["waiting_add_food"][u_str]
+            del db["states"]["waiting_add_food"][u_str]
+            if raw_text:
+                g_data = get_group_data(db, target_cid)
+                foods = g_data.setdefault("foods", list(DEFAULT_FOODS))
+                food_item = raw_text.strip()
+                if food_item.lower() not in [f.strip().lower() for f in foods]:
+                    foods.append(food_item)
+                    await update.message.reply_text(f"✅ «{food_item}» به منوی این گروه اضافه شد.")
+                else:
+                    await update.message.reply_text("❌ این غذا قبلاً وجود داشته!")
                 mark_db_dirty()
                 save_db(force=True)
-
-                await update.message.reply_text("✅ <b>پیام کامنت اتوماتیک با موفقیت ذخیره و فعال شد!</b>", parse_mode=ParseMode.HTML)
                 return
 
-            if user_id in db["states"].get("waiting_welcome_msg", {}):
-                target_chat_id = db["states"]["waiting_welcome_msg"][user_id]
-                del db["states"]["waiting_welcome_msg"][user_id]
-
-                chat_id_str = str(target_chat_id)
-                if "welcome_settings" not in db: db["welcome_settings"] = {}
-                db["welcome_settings"][chat_id_str] = {
-                    "enabled": True,
-                    "custom": True,
-                    "saved_msg_id": update.message.message_id,
-                    "saved_from_chat_id": update.message.chat_id
-                }
+        if u_str in db["states"].get("waiting_del_food", []):
+            target_cid = db["states"]["waiting_del_food"][u_str]
+            del db["states"]["waiting_del_food"][u_str]
+            if raw_text:
+                g_data = get_group_data(db, target_cid)
+                foods = g_data.setdefault("foods", list(DEFAULT_FOODS))
+                food_item = raw_text.strip()
+                target_idx = next((i for i, f in enumerate(foods) if f.strip().lower() == food_item.lower()), None)
+                if target_idx is not None:
+                    rm = foods.pop(target_idx)
+                    await update.message.reply_text(f"✅ «{rm}» از لیست این گروه حذف شد.")
+                else:
+                    await update.message.reply_text("❌ این غذا یافت نشد!")
                 mark_db_dirty()
                 save_db(force=True)
-
-                await update.message.reply_text("✅ <b>پیام خوش‌آمدگویی اختصاصی این گروه با موفقیت ذخیره شد!</b>", parse_mode=ParseMode.HTML)
                 return
 
-            if user_id in db["states"].get("waiting_broadcast_msg", {}) and int(user_id) == int(OWNER_ID):
-                target_cid = db["states"]["waiting_broadcast_msg"][user_id]
-                del db["states"]["waiting_broadcast_msg"][user_id]
+        if u_str in db["states"].get("waiting_poem_names", []):
+            target_cid = db["states"]["waiting_poem_names"][u_str]
+            if raw_text and not raw_text.startswith("/"):
+                g_data = get_group_data(db, target_cid)
+                c_names = g_data.setdefault("custom_names", [])
+                c_names.append(raw_text.strip())
                 mark_db_dirty()
                 save_db(force=True)
-                try:
-                    sent = await context.bot.send_message(
-                        chat_id=target_cid,
-                        text=update.message.text or "",
-                        entities=update.message.entities
-                    )
-                    try:
-                        await context.bot.pin_chat_message(chat_id=target_cid, message_id=sent.message_id)
-                    except Exception:
-                        logger.warning("Bot does not have pin rights in target chat, skipping pin.")
-                    await update.message.reply_text("✅ پیام همگانی با موفقیت ارسال شد.")
-                except Exception as e:
-                    await update.message.reply_text(f"❌ خطا در ارسال پیام همگانی: {e}")
+                await update.message.reply_text(f"✅ اسم «{raw_text.strip()}» برای این گروه ثبت شد. بعدی را بفرستید یا /done بزنید.")
                 return
 
-            if user_id in db["states"].get("waiting_lef_media", []) and int(user_id) == int(OWNER_ID):
-                media = None
-                if update.message.sticker: media = {"type": "sticker", "file_id": update.message.sticker.file_id}
-                elif update.message.photo: media = {"type": "photo", "file_id": update.message.photo[-1].file_id}
-                elif update.message.animation: media = {"type": "animation", "file_id": update.message.animation.file_id}
-                elif update.message.video: media = {"type": "video", "file_id": update.message.video.file_id}
-                    
-                if media:
-                    db["media_lef"] = media
-                    db["states"]["waiting_lef_media"].remove(user_id)
-                    mark_db_dirty()
-                    save_db(force=True)
-                    await update.message.reply_text("✅ رسانه لف ذخیره شد.")
-                    return
-
-            if user_id in db["states"].get("waiting_add_food", []):
-                if raw_text:
-                    food_item = raw_text.strip()
-                    if food_item.lower() in [f.strip().lower() for f in db["foods"]]:
-                        await update.message.reply_text("❌ این غذا قبلاً وجود داشته!")
-                    else:
-                        db["foods"].append(food_item)
-                        await update.message.reply_text(f"✅ «{food_item}» اضافه شد.")
-                    db["states"]["waiting_add_food"].remove(user_id)
-                    mark_db_dirty()
-                    save_db(force=True)
-                    return
-
-            if user_id in db["states"].get("waiting_del_food", []):
-                if raw_text:
-                    food_item = raw_text.strip()
-                    target_idx = next((i for i, f in enumerate(db["foods"]) if f.strip().lower() == food_item.lower()), None)
-                    if target_idx is not None:
-                        rm = db["foods"].pop(target_idx)
-                        await update.message.reply_text(f"✅ «{rm}» حذف شد.")
-                    else:
-                        await update.message.reply_text("❌ این غذا یافت نشد!")
-                    db["states"]["waiting_del_food"].remove(user_id)
-                    mark_db_dirty()
-                    save_db(force=True)
-                    return
-
-            if user_id in db["states"].get("waiting_cooldown", []) and int(user_id) == int(OWNER_ID):
-                if raw_text and raw_text.isdigit():
-                    val = int(raw_text)
-                    if val > 0:
-                        db["cooldown_minutes"] = val
-                        await update.message.reply_text(f"✅ زمان محدودیت با موفقیت روی <b>{val} دقیقه</b> تنظیم شد.", parse_mode=ParseMode.HTML)
-                    db["states"]["waiting_cooldown"].remove(user_id)
-                    mark_db_dirty()
-                    save_db(force=True)
-                    return
-
-            if user_id in db["states"].get("waiting_poem_names", []):
-                if raw_text and not raw_text.startswith("/"):
-                    name_item = raw_text.strip()
-                    if "custom_names" not in db: db["custom_names"] = []
-                    db["custom_names"].append(name_item)
-                    mark_db_dirty()
-                    save_db(force=True)
-                    await update.message.reply_text(f"✅ اسم «{name_item}» ثبت شد. اسم بعدی را بفرستید یا /done را بزنید.")
-                    return
-
-            if user_id in db["states"].get("waiting_add_poem", []):
-                if raw_text and not raw_text.startswith("/"):
-                    poem_item = raw_text.strip().replace("یوزرنیم", "{name}")
-                    if "poems" not in db: db["poems"] = []
-                    db["poems"].append(poem_item)
-                    db["states"]["waiting_add_poem"].remove(user_id)
-                    mark_db_dirty()
-                    save_db(force=True)
-                    await update.message.reply_text("✅ شعر جدید با موفقیت اضافه شد.")
-                    return
+        if u_str in db["states"].get("waiting_add_poem", []):
+            target_cid = db["states"]["waiting_add_poem"][u_str]
+            del db["states"]["waiting_add_poem"][u_str]
+            if raw_text and not raw_text.startswith("/"):
+                poem_item = raw_text.strip().replace("یوزرنیم", "{name}")
+                g_data = get_group_data(db, target_cid)
+                p_list = g_data.setdefault("poems", list(DEFAULT_POEMS))
+                p_list.append(poem_item)
+                mark_db_dirty()
+                save_db(force=True)
+                await update.message.reply_text("✅ شعر جدید برای این گروه اضافه شد.")
+                return
 
         features = db.get("features", {})
 
         # --------------------------------------
-        # HELP / راهنما PANEL با ایموجی پریمیوم و عنوان جدید «راهنمای مدیریتی»
+        # HELP / راهنما PANEL
         # --------------------------------------
-        help_triggers = [
-            "راهنما", "/help", "گودی راهنما", "گودی معرفی کن", 
-            "گودی چیا بلدی؟", "چیا بلدی؟", "چیا بلدی", "گودی چیا بلدی"
-        ]
+        help_triggers = ["راهنما", "/help", "گودی راهنما", "گودی معرفی کن", "گودی چیا بلدی؟", "چیا بلدی؟", "چیا بلدی", "گودی چیا بلدی"]
         if clean_raw in help_triggers:
             txt = (
                 '<b>سلام عزیزم به ربات من خوش اومدی! <tg-emoji emoji-id="5352750090974929602">😍</tg-emoji></b>\n\n'
-                '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه میمون کوچولو هست آشنا بشی! <tg-emoji emoji-id="5413391520206169048">🐻</tg-emoji></b>\n'
-                '<b>- برخی از دستورات بدون ادمین بودن کار می‌کنند ولی برخی دیگر نیازمند دسترسی مدیریت هستند.</b>'
+                '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه میمون کوچولو هست آشنا بشی! <tg-emoji emoji-id="5413391520206169048">🐻</tg-emoji></b>'
             )
-
             kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun", style="primary", icon_custom_emoji_id="5415940089375106928"),
-                    InlineKeyboardButton("راهنمای بی ادبی", callback_data="help_rude", style="primary", icon_custom_emoji_id="5832633418386513259")
-                ],
-                [
-                    InlineKeyboardButton("راهنمای کاربردی", callback_data="help_useful", style="primary", icon_custom_emoji_id="5830338333892418460"),
-                    InlineKeyboardButton("راهنمای مدیریتی", callback_data="help_admin", style="primary", icon_custom_emoji_id="5803348359972393936")
-                ]
+                [InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun", style="primary", icon_custom_emoji_id="5415940089375106928"),
+                 InlineKeyboardButton("راهنمای بی ادبی", callback_data="help_rude", style="primary", icon_custom_emoji_id="5832633418386513259")],
+                [InlineKeyboardButton("راهنمای کاربردی", callback_data="help_useful", style="primary", icon_custom_emoji_id="5830338333892418460"),
+                 InlineKeyboardButton("راهنمای مدیریتی", callback_data="help_admin", style="primary", icon_custom_emoji_id="5803348359972393936")]
             ])
             await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             return
 
         # --------------------------------------
-        # REPORT SYSTEM / سیستم گزارش با ایموجی پریمیوم & پاسخ دفاعی ربات
+        # REPORT SYSTEM
         # --------------------------------------
         if clean_raw in ["گزارش", "report"] and update.message.reply_to_message:
             target_msg = update.message.reply_to_message
             if target_msg.from_user and target_msg.from_user.id == context.bot.id:
-                reply_bot_text = '<b>منو گزارش میدی؟! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>'
-                await update.message.reply_text(reply_bot_text, parse_mode=ParseMode.HTML)
+                await update.message.reply_text('<b>منو گزارش میدی؟! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>', parse_mode=ParseMode.HTML)
                 return
 
             rep_id = f"{chat_id}_{update.message.message_id}"
-            if "reports" not in db: db["reports"] = {}
-            db["reports"][rep_id] = {
-                "reporter_id": user_id,
-                "target_msg_id": target_msg.message_id
-            }
+            reports = db.setdefault("reports", {})
+            reports[rep_id] = {"reporter_id": user_id, "target_msg_id": target_msg.message_id}
             mark_db_dirty()
             save_db()
 
-            admin_mentions = ""
-            try:
-                admins = await context.bot.get_chat_administrators(chat_id)
-                admin_mentions = "".join([f'<a href="tg://user?id={a.user.id}">&#8203;</a>' for a in admins if not a.user.is_bot])
-            except Exception:
-                pass
-
-            txt = f'<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> گزارش شما برای مدیران گروه ارسال شد!</b>{admin_mentions}'
+            txt = '<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> گزارش شما برای مدیران گروه ارسال شد!</b>'
             kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("بررسی شد", callback_data=f"report_resolve:{rep_id}", style="success", icon_custom_emoji_id="5206607081334906820"),
-                    InlineKeyboardButton("حذف", callback_data=f"report_cancel:{rep_id}", style="danger", icon_custom_emoji_id="5819154526816444042")
-                ]
+                [InlineKeyboardButton("بررسی شد", callback_data=f"report_resolve:{rep_id}", style="success", icon_custom_emoji_id="5206607081334906820"),
+                 InlineKeyboardButton("حذف", callback_data=f"report_cancel:{rep_id}", style="danger", icon_custom_emoji_id="5819154526816444042")]
             ])
             await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             return
 
         # --------------------------------------
-        # DODOL / FUN RESPONSE با اصلاح ASCII ART
+        # DODOL / FUN RESPONSE
         # --------------------------------------
         if DODOL_PATTERN.search(raw_text):
             ascii_penis = (
                 "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⡿⠁⠄⣳⢷⣿⣿⣿⣿⡿ issue⠖⠄⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⠁⠄⣳⢷⣿⣿⣿⣿⡿ issue⠖⠄⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍ military⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
@@ -2371,7 +2765,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # BOT NAME RESPONSES با ایموجی پریمیوم (پاسخ به «گودی» بدون نیاز به Reply)
+        # BOT NAME RESPONSES
         # --------------------------------------
         is_reply_to_bot = (
             update.message.reply_to_message and 
@@ -2379,14 +2773,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.reply_to_message.from_user.id == context.bot.id
         )
 
-        # دفاع خودکار گودی با ایموجی پریمیوم
         if is_reply_to_bot and (clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد ")):
             topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").replace("ش", "").replace("ه", "").strip()
-            topic_clean = html.escape(topic)
-            await update.message.reply_text(
-                f'<b>{topic_clean} خودتی! <tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji></b>',
-                parse_mode=ParseMode.HTML
-            )
+            await update.message.reply_text(f'<b>{html.escape(topic)} خودتی! <tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji></b>', parse_mode=ParseMode.HTML)
             return
 
         if (is_reply_to_bot and clean_raw in ["تو کی هستی", "تو کی هستی؟"]):
@@ -2398,7 +2787,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # ACTION REGISTRATION SYSTEM با ایموجی پریمیوم (استفاده از سیستم جدید Resolve User)
+        # ACTION REGISTRATION
         # --------------------------------------
         action_type = None
         if any(k in clean_raw for k in ["ثبت گوه خوری", "ثبت گوهخوری"]): action_type = "goh_khori"
@@ -2413,55 +2802,27 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             target_uid, target_fname, target_uname, target_mention = resolve_target_user(update, context)
-
             if target_uid:
                 if target_uid == context.bot.id:
                     await update.message.reply_text('<b><tg-emoji emoji-id="6041764253726150869">😐</tg-emoji> خیلی کارت زشت بود!</b>', parse_mode=ParseMode.HTML)
                     return
-                
                 if target_uid == user_id:
                     await update.message.reply_text('<b><tg-emoji emoji-id="6044308162855571406">😒</tg-emoji> داری سعی میکنی روی خودت انجام بدی؟ خود درگیری داری مگه داداش!</b>', parse_mode=ParseMode.HTML)
                     return
 
                 action_configs = {
-                    "goh_khori": {
-                        "title": "گوه‌خوری",
-                        "stat_key": "goh_khori",
-                        "icon_id": "5819051035284479206",
-                        "funny_text": "گوه‌خوری نوین مشاهده شد!"
-                    },
-                    "kos_lisi": {
-                        "title": "کصلیسی",
-                        "stat_key": "kos_lisi",
-                        "icon_id": "5832692422647226240",
-                        "funny_text": "مدال شجاعت کصلیسی تعلق گرفت!"
-                    },
-                    "khaymali": {
-                        "title": "خایمالی",
-                        "stat_key": "khaymali",
-                        "icon_id": "5920300405341820405",
-                        "funny_text": "خایمال‌نامه جدید صادر شد!"
-                    },
-                    "kos_khali": {
-                        "title": "کصخلی",
-                        "stat_key": "kos_khali",
-                        "icon_id": "5443038326535759644",
-                        "funny_text": "پرونده پزشکی کصخلی تنظیم شد!"
-                    },
-                    "jendegi": {
-                        "title": "جندگی",
-                        "stat_key": "jendegi",
-                        "icon_id": "4974615079971455718",
-                        "funny_text": "ثبت جندگی جدید در سیستم با موفقیت ثبت شد!"
-                    }
+                    "goh_khori": {"title": "گوه‌خوری", "stat_key": "goh_khori", "icon_id": "5819051035284479206", "funny_text": "گوه‌خوری نوین مشاهده شد!"},
+                    "kos_lisi": {"title": "کصلیسی", "stat_key": "kos_lisi", "icon_id": "5832692422647226240", "funny_text": "مدال شجاعت کصلیسی تعلق گرفت!"},
+                    "khaymali": {"title": "خایمالی", "stat_key": "khaymali", "icon_id": "5920300405341820405", "funny_text": "خایمال‌نامه جدید صادر شد!"},
+                    "kos_khali": {"title": "کصخلی", "stat_key": "kos_khali", "icon_id": "5443038326535759644", "funny_text": "پرونده پزشکی کصخلی تنظیم شد!"},
+                    "jendegi": {"title": "جندگی", "stat_key": "jendegi", "icon_id": "4974615079971455718", "funny_text": "ثبت جندگی جدید در سیستم با موفقیت ثبت شد!"}
                 }
                 cfg = action_configs[action_type]
                 rec_id = f"{chat_id}_{update.message.message_id}"
                 
                 increment_user_stat(db, target_uid, cfg["stat_key"])
-
-                if "action_records" not in db: db["action_records"] = {}
-                db["action_records"][rec_id] = {
+                records = db.setdefault("action_records", {})
+                records[rec_id] = {
                     "target_id": target_uid,
                     "target_name": target_fname,
                     "creator_id": user_id,
@@ -2475,24 +2836,21 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_db()
 
                 creator_mention = get_user_mention(user_id, update.effective_user.full_name)
-
                 init_msg = (
                     f"<b>{cfg['title']} {target_mention} با موفقیت ثبت شد! <tg-emoji emoji-id=\"5206607081334906820\">✔️</tg-emoji></b>\n"
                     f"<b>ثبت کننده {cfg['title']}: {creator_mention} <tg-emoji emoji-id=\"4956745198521549627\">🌟</tg-emoji></b>\n"
                     f"<b><tg-emoji emoji-id=\"5803348359972393936\">⚙️</tg-emoji> در انتظار امضای شاهدان...</b>\n\n"
                     f"<b>{cfg['funny_text']} <tg-emoji emoji-id=\"{cfg['icon_id']}\">🔥</tg-emoji></b>"
                 )
-
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("امضای شاهدان (۰)", callback_data=f"sign_action:{rec_id}", style="success", icon_custom_emoji_id="5859527571586161695")],
                     [InlineKeyboardButton(f"آمار کل {cfg['title']} این کاربر", callback_data=f"stat_action:{rec_id}", style="primary", icon_custom_emoji_id="5888937012253171131")]
                 ])
-
                 await update.message.reply_text(init_msg, reply_markup=kb, parse_mode=ParseMode.HTML)
                 return
 
         # --------------------------------------
-        # STATS & OVERALL USER STATUS با ایموجی پریمیوم
+        # STATS & OVERALL USER STATUS
         # --------------------------------------
         is_asking_own_stats = clean_raw in ["آمارم", "آمار من", "وضعیت من"]
         is_asking_other_stats = clean_raw in ["اوضاع این", "اوضاعش", "آمار این", "وضعیت این", "وضعیت"] and update.message.reply_to_message
@@ -2525,57 +2883,19 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # GENERAL PERCENTAGE SYSTEM با ایموجی پریمیوم
+        # GENERAL PERCENTAGE
         # --------------------------------------
         if clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد "):
             target_uid, target_fname, target_uname, target_mention = resolve_target_user(update, context)
             topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").strip()
             val = random.randint(0, 100)
-            
-            rand_emoji_id = random.choice([
-                "5886539179256450622", "5922483378304586599", 
-                "5195297917048462460", "5983342699816685361"
-            ])
-            
-            await update.message.reply_text(
-                f"{target_mention}\n\n"
-                f'<tg-emoji emoji-id="{rand_emoji_id}">🎲</tg-emoji> <b>{val}٪ {html.escape(topic)}ه</b>',
-                parse_mode=ParseMode.HTML
-            )
+            rand_emoji_id = random.choice(["5886539179256450622", "5922483378304586599", "5195297917048462460", "5983342699816685361"])
+            await update.message.reply_text(f"{target_mention}\n\n<tg-emoji emoji-id=\"{rand_emoji_id}\">🎲</tg-emoji> <b>{val}٪ {html.escape(topic)}ه</b>", parse_mode=ParseMode.HTML)
             return
 
         # --------------------------------------
-        # INDIVIDUAL COUNTRY WORLD TIME با آیدی پریمیوم پرچم‌ها
+        # WORLD TIME
         # --------------------------------------
-        country_zones = {
-            "ایران": ("Asia/Tehran", "5271878966347601947", "🇮🇷"),
-            "آمریکا": ("America/New_York", "5927292517610426176", "🇺🇸"),
-            "امریکا": ("America/New_York", "5927292517610426176", "🇺🇸"),
-            "آلمان": ("Europe/Berlin", "5409360418520967565", "🇩🇪"),
-            "انگلیس": ("Europe/London", "5229192892710402006", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
-            "ترکیه": ("Europe/Istanbul", "5226948110873278599", "🇹🇷"),
-            "هندوستان": ("Asia/Kolkata", "6136551252781172945", "🇮🇳"),
-            "هند": ("Asia/Kolkata", "6136551252781172945", "🇮🇳"),
-            "عربستان": ("Asia/Riyadh", "5202079966761590204", "🇸🇦"),
-            "فرانسه": ("Europe/Paris", "5931269906434624310", "🇫🇷"),
-            "چین": ("Asia/Shanghai", "5431782733376399004", "🇨🇳"),
-            "ویتنام": ("Asia/Bangkok", "5474542319673812606", "🇻🇳"),
-            "قطر": ("Asia/Qatar", "5228799250367788944", "🇶🇦"),
-            "کره جنوبی": ("Asia/Seoul", "5456531898304047227", "🇰🇷"),
-            "کره": ("Asia/Seoul", "5456531898304047227", "🇰🇷"),
-            "ژاپن": ("Asia/Tokyo", "5456261908069885892", "🇯🇵"),
-            "فنلاند": ("Europe/Helsinki", "5382151560182642075", "🇫🇮"),
-        }
-
-        if norm_text.startswith("ساعت "):
-            c_name = norm_text.replace("ساعت ", "").strip()
-            if c_name in country_zones:
-                tz, emoji_id, fallback = country_zones[c_name]
-                c_time = datetime.now(ZoneInfo(tz)).strftime("%H:%M:%S")
-                await update.message.reply_text(f'<b><tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji> ساعت {c_name}: <code>{c_time}</code></b>', parse_mode=ParseMode.HTML)
-                return
-
-        # ۱. ساعت جهانی کامل با دستورات «ساعت» و «ساعت جهانی»
         if norm_text in ["ساعت جهانی", "ساعت"] and features.get("world_time", True):
             now_tehran = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%H:%M:%S")
             now_ny = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
@@ -2586,11 +2906,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             now_riyadh = datetime.now(ZoneInfo("Asia/Riyadh")).strftime("%H:%M:%S")
             now_paris = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
             now_beijing = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%H:%M:%S")
-            now_hanoi = datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%H:%M:%S")
-            now_doha = datetime.now(ZoneInfo("Asia/Qatar")).strftime("%H:%M:%S")
-            now_seoul = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M:%S")
             now_tokyo = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M:%S")
-            now_helsinki = datetime.now(ZoneInfo("Europe/Helsinki")).strftime("%H:%M:%S")
 
             msg = (
                 '<b><tg-emoji emoji-id="5399898266265475100">🌍</tg-emoji> ساعت جهانی برخی از کشورها :</b>\n\n'
@@ -2599,32 +2915,24 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f'<b><tg-emoji emoji-id="5409360418520967565">🇩🇪</tg-emoji> آلمان: {now_germany}</b>\n'
                 f'<b><tg-emoji emoji-id="5229192892710402006">🏴󠁧󠁢󠁥󠁮󠁧󠁿</tg-emoji> انگلیس: {now_london}</b>\n'
                 f'<b><tg-emoji emoji-id="5226948110873278599">🇹🇷</tg-emoji> ترکیه: {now_istanbul}</b>\n'
-                f'<b><tg-emoji emoji-id="6136551252781172945">🇮🇳</tg-emoji> هندوستان: {now_mumbai}</b>\n'
+                f'<b><tg-emoji emoji-id="6136551252781172945">🇮🇳</tg-emoji> هند: {now_mumbai}</b>\n'
                 f'<b><tg-emoji emoji-id="5202079966761590204">🇸🇦</tg-emoji> عربستان: {now_riyadh}</b>\n'
                 f'<b><tg-emoji emoji-id="5931269906434624310">🇫🇷</tg-emoji> فرانسه: {now_paris}</b>\n'
                 f'<b><tg-emoji emoji-id="5431782733376399004">🇨🇳</tg-emoji> چین: {now_beijing}</b>\n'
-                f'<b><tg-emoji emoji-id="5474542319673812606">🇻🇳</tg-emoji> ویتنام: {now_hanoi}</b>\n'
-                f'<b><tg-emoji emoji-id="5228799250367788944">🇶🇦</tg-emoji> قطر: {now_doha}</b>\n'
-                f'<b><tg-emoji emoji-id="5456531898304047227">🇰🇷</tg-emoji> کره جنوبی: {now_seoul}</b>\n'
-                f'<b><tg-emoji emoji-id="5456261908069885892">🇯🇵</tg-emoji> ژاپن: {now_tokyo}</b>\n'
-                f'<b><tg-emoji emoji-id="5382151560182642075">🇫🇮</tg-emoji> فنلاند: {now_helsinki}</b>'
+                f'<b><tg-emoji emoji-id="5456261908069885892">🇯🇵</tg-emoji> ژاپن: {now_tokyo}</b>'
             )
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # ۲. خوشتیپ / خوژتیپ با ایموجی پریمیوم
-        elif norm_text in ["خوشتیپ کیه", "خوشتیپ کی", "خوژتیپ کیه", "خوژتیپ کی", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
+        # --------------------------------------
+        # FUN FEATURES (Handsome, Jende, Koni, Jaghi, Koskhal, Sexy, Jazab)
+        # --------------------------------------
+        elif norm_text in ["خوشتیپ کیه", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
             word_label = "خوژتیپ" if "خوژ" in norm_text else "خوشتیپ"
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "handsome")
-            
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                msg = (
-                    f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5321484996802797866">😎</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>- ولی خب {m_rem} دقیقه دیگه {word_label} بعدی معرفی میشه! <tg-emoji emoji-id="5323417298294298902">🙂</tg-emoji></b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -2632,25 +2940,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "handsome", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "handsome")
-                    
-                    msg = (
-                        f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه :</b>\n\n'
-                        f'<b><tg-emoji emoji-id="5321484996802797866">😎</tg-emoji> | {target_mention}</b>'
-                    )
-                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        # ۳. جنده با ایموجی پریمیوم
-        elif norm_text in ["جنده کیه", "جنده کی", "جنده"] and features.get("jende", True):
+        elif norm_text in ["جنده کیه", "جنده"] and features.get("jende", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jende")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                msg = (
-                    f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>+ ولی خب هر جندگی دائمی نیست! {m_rem} دقیقه دیگه جنده بعدی معرفی میشه! <tg-emoji emoji-id="4974573543342736117">🖤</tg-emoji></b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -2658,25 +2955,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "jende", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "jendegi")
-                    
-                    msg = (
-                        f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه :</b>\n\n'
-                        f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>'
-                    )
-                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        # ۴. کونی با ایموجی پریمیوم
-        elif norm_text in ["کونی کیه", "کونی کی", "کونی"] and features.get("koni", True):
+        elif norm_text in ["کونی کیه", "کونی"] and features.get("koni", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koni")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                msg = (
-                    f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>+ ولی خب {m_rem} دقیقه دیگه کونی بعدی معرفی میشه! <tg-emoji emoji-id="4974672507979170737">🍌</tg-emoji></b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -2684,26 +2970,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "koni", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "koni")
-                    
-                    msg = (
-                        f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه :</b>\n\n'
-                        f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>'
-                    )
-                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        # ۵. جقی با ایموجی پریمیوم
-        elif norm_text in ["جقی", "جقی کیه", "جقی گروه"] and features.get("jaghi", True):
+        elif norm_text in ["جقی", "جقی کیه"] and features.get("jaghi", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jaghi")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                msg = (
-                    f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="4974362376980660892">🍌</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>+ بزن که خوب میزنی رفیق گلم! <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji></b>\n'
-                    f'<b>- ولی این جق ابدی نیست! {m_rem} دقیقه دیگه جقی بعدیو معرفی میکنم.</b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -2711,26 +2985,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "jaghi", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "jaghi")
-                    
-                    msg = (
-                        f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه :</b>\n\n'
-                        f'<b><tg-emoji emoji-id="4974362376980660892">🍌</tg-emoji> | {target_mention}</b>\n\n'
-                        f'<b>+ بزن که خوب میزنی رفیق گلم! <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji></b>'
-                    )
-                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        # ۶. کصخل / کسخل با ایموجی پریمیوم
-        elif norm_text in ["کصخل", "کسخل", "کصخل گروه", "کسخل گروه"] and features.get("koskhal", True):
+        elif norm_text in ["کصخل", "کسخل"] and features.get("koskhal", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koskhal")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                msg = (
-                    f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5861747442612964510">🤙</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>+ هر کصخلی درمانی دارد! {m_rem} دقیقه دیگه کصخل بعدیو معرفی میکنم.</b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -2738,26 +3000,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "koskhal", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "kos_khali")
-                    
-                    msg = (
-                        f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه :</b>\n\n'
-                        f'<b><tg-emoji emoji-id="5861747442612964510">🤙</tg-emoji> | {target_mention}</b>\n\n'
-                        f'<b>+ هر کصخلی درمانی دارد!</b>'
-                    )
-                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        # ۷. سکسی با ایموجی پریمیوم
         elif norm_text in ["سکسی", "سکسی گروه"] and features.get("sexy", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "sexy")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                msg = (
-                    f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5247009821508537591">🚬</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>+ ولی خب {m_rem} دقیقه دیگه سکسی بعدیو معرفی میکنم.</b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه: {target_mention}</b>', parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -2765,26 +3015,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "sexy", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "sexy")
-                    
-                    msg = (
-                        f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه :</b>\n\n'
-                        f'<b><tg-emoji emoji-id="5247009821508537591">🚬</tg-emoji> | {target_mention}</b>'
-                    )
-                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        # ۸. جذاب با ایموجی پریمیوم
         elif norm_text in ["جذاب", "جذاب گروه"] and features.get("jazab", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jazab")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                msg = (
-                    f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5774059410317905809">❤️</tg-emoji> | {target_mention}</b>\n\n'
-                    f'<b>عشقمممم شماره میدی پاره کنیم؟؟؟ <tg-emoji emoji-id="5773636884320226590">💋</tg-emoji></b>\n'
-                    f'<b>+ {m_rem} دقیقه دیگه جذاب بعدیو معرفی میکنم.</b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه: {target_mention}</b>', parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -2792,37 +3030,18 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "jazab", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "jazab")
-                    
-                    msg = (
-                        f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه :</b>\n\n'
-                        f'<b><tg-emoji emoji-id="5774059410317905809">❤️</tg-emoji> | {target_mention}</b>\n\n'
-                        f'<b>عشقمممم شماره میدی پاره کنیم؟؟؟ <tg-emoji emoji-id="5773636884320226590">💋</tg-emoji></b>'
-                    )
-                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        # ۹. شیپ / کاپل با ایموجی پریمیوم
+        # --------------------------------------
+        # COUPLE / SHIP SYSTEM
+        # --------------------------------------
         elif norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
             if is_cd:
                 m_rem = rem_sec // 60
                 name1 = get_user_mention(cd_data["u1"]["id"], cd_data["u1"]["name"])
                 name2 = get_user_mention(cd_data["u2"]["id"], cd_data["u2"]["name"])
-                
-                last_msg_id = cd_data.get("last_msg_id")
-                couple_data = db.get("couples", {}).get(str(last_msg_id), {}) if last_msg_id else {}
-                agrees = couple_data.get("agrees", [])
-                disagrees = couple_data.get("disagrees", [])
-
-                agrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in agrees]) if agrees else "هیچکس"
-                disagrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in disagrees]) if disagrees else "هیچکس"
-
-                msg = (
-                    f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان ثبت شده: {agrees_text}</b>\n'
-                    f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان ثبت شده : {disagrees_text}</b>\n\n'
-                    f'<b>+ {m_rem} دقیقه دیگه کاپل بعدیو میگم بچهااااا!<tg-emoji emoji-id="5816460319601467354">😺</tg-emoji></b>'
-                )
+                msg = f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> کاپل فعلی: {name1} 💕 {name2} ({m_rem} دقیقه بعد کاپل بعدی)</b>'
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
             else:
                 m1 = await get_fast_random_member(context, chat_id, db)
@@ -2830,7 +3049,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if m1 and m2 and m1[0] != m2[0]:
                     u1_dict = {"id": int(m1[0]), "name": m1[1]['fullname']}
                     u2_dict = {"id": int(m2[0]), "name": m2[1]['fullname']}
-                    
                     increment_user_stat(db, u1_dict["id"], "ship")
                     increment_user_stat(db, u2_dict["id"], "ship")
 
@@ -2838,10 +3056,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     name2 = get_user_mention(u2_dict["id"], u2_dict["name"])
 
                     kb = InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton("موافقم", callback_data="couple_agree", style="success", icon_custom_emoji_id="5411228694935012881"),
-                            InlineKeyboardButton("افتضاح", callback_data="couple_disagree", style="danger", icon_custom_emoji_id="5411484842489578182")
-                        ]
+                        [InlineKeyboardButton("موافقم", callback_data="couple_agree", style="success", icon_custom_emoji_id="5411228694935012881"),
+                         InlineKeyboardButton("افتضاح", callback_data="couple_disagree", style="danger", icon_custom_emoji_id="5411484842489578182")]
                     ])
 
                     sent_msg = await update.message.reply_text(
@@ -2853,8 +3069,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode=ParseMode.HTML
                     )
 
-                    if "couples" not in db: db["couples"] = {}
-                    db["couples"][str(sent_msg.message_id)] = {
+                    couples = db.setdefault("couples", {})
+                    couples[str(sent_msg.message_id)] = {
                         "u1": u1_dict,
                         "u2": u2_dict,
                         "agrees": [],
@@ -2863,49 +3079,46 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     }
                     set_cooldown_data(db, chat_id, "ship", {"u1": u1_dict, "u2": u2_dict, "last_msg_id": sent_msg.message_id})
                 else:
-                    await update.message.reply_text(
-                        '<b>❌ اعضای کافی موجود نیست! <tg-emoji emoji-id="5857415006022278161">❌</tg-emoji></b>',
-                        parse_mode=ParseMode.HTML
-                    )
+                    await update.message.reply_text('<b>❌ اعضای کافی موجود نیست!</b>', parse_mode=ParseMode.HTML)
 
-        # ۱۰. پیشنهاد غذا با ایموجی پریمیوم
+        # --------------------------------------
+        # FOOD & POEM (Group Isolated)
+        # --------------------------------------
         elif ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
-            fl = db.get("foods", [])
+            g_data = get_group_data(db, chat_id)
+            fl = g_data.get("foods", DEFAULT_FOODS)
             if fl:
                 selected_food = random.choice(fl)
-                msg = (
-                    f'<b><tg-emoji emoji-id="5418248505447698083">🧽</tg-emoji> دنبال غذایی؟ بنظرم بهترین ایده غذا برای تو اینه :</b>\n\n'
-                    f'<b><tg-emoji emoji-id="5357066069250948384">🐱</tg-emoji> | {html.escape(selected_food)}</b>'
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f'<b><tg-emoji emoji-id="5418248505447698083">🧽</tg-emoji> ایده غذای گروه: {html.escape(selected_food)}</b>', parse_mode=ParseMode.HTML)
 
-        # ۱۱. سیستم شعرخوانی همراه با ایموجی پریمیوم قلم ✍️
         elif norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
-            custom_names = db.get("custom_names", [])
+            g_data = get_group_data(db, chat_id)
+            custom_names = g_data.get("custom_names", [])
             if custom_names:
                 target_name = random.choice(custom_names)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
-                if m_tuple:
-                    tid, info = m_tuple
-                    target_name = get_user_mention(int(tid), info["fullname"])
-                else:
-                    target_name = "رفیق"
+                target_name = get_user_mention(int(m_tuple[0]), m_tuple[1]["fullname"]) if m_tuple else "رفیق"
 
-            all_poems = db.get("poems", DEFAULT_POEMS)
+            all_poems = g_data.get("poems", DEFAULT_POEMS)
             poem_template = random.choice(all_poems)
             final_poem = poem_template.format(name=target_name)
             await update.message.reply_text(f'<tg-emoji emoji-id="5859527571586161695">✍️</tg-emoji> <b>{final_poem}</b>', parse_mode=ParseMode.HTML)
 
-        # ۱۲. تشخیص «لف»
+        # --------------------------------------
+        # LEF DETECTION
+        # --------------------------------------
         elif LEF_PATTERN.search(raw_text) and features.get("lef", True):
-            ml = db.get("media_lef")
+            g_data = get_group_data(db, chat_id)
+            ml = g_data.get("media_lef") or db.get("media_lef")
             if ml:
-                mt, fi = ml["type"], ml["file_id"]
-                if mt == "sticker": await update.message.reply_sticker(fi)
-                elif mt == "photo": await update.message.reply_photo(fi)
-                elif mt == "animation": await update.message.reply_animation(fi)
-                elif mt == "video": await update.message.reply_video(fi)
+                await send_media_payload(context.bot, chat_id, ml)
+
+        # --------------------------------------
+        # RANDOM REACTION TRIGGER ON REPLY
+        # --------------------------------------
+        if update.message.reply_to_message:
+            await handle_random_reply_reaction(update, context)
 
     except Exception:
         logger.exception("Error in handle_messages:")
@@ -2933,26 +3146,26 @@ def main():
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
-    # 1. سیستم کامنت خودکار برای پست‌های کانال متصل به گروه بحث
+    # 1. Automatic comment for channel connected discussion group
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.IS_AUTOMATIC_FORWARD, handle_automatic_channel_comments), group=-3)
 
-    # 2. سیستم خوش‌آمادگویی اعضای جدید
+    # 2. Welcome system
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
 
-    # 3. اختصاصی برای بازی دوز با بالاترین اولویت (group=-1)
+    # 3. Dwoz game
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler),
         group=-1
     )
 
-    # 4. هاندر عمومی پیام‌ها
+    # 4. General message handler
     app.add_handler(
-        MessageHandler(filters.TEXT & (~filters.COMMAND), handle_messages)
+        MessageHandler(filters.ALL & (~filters.COMMAND), handle_messages)
     )
 
     app.add_error_handler(global_error_handler)
 
-    logger.info("Bot is running...")
+    logger.info("Bot is running with full isolated group architecture...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
