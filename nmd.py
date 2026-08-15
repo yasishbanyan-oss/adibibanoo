@@ -113,13 +113,11 @@ CLEANUP_PATTERN = re.compile(r"^\s*حذف\s+(?P<count>-?\d+|[a-zA-Z]+)?\s*$", re
 FUN_NAMED_PATTERN = re.compile(r"^\s*ناموسی\s+بده(?:\s+(?P<count>\d+))?\s*$", re.IGNORECASE)
 FUN_NORMAL_PATTERN = re.compile(r"^\s*فحش\s+بده(?:\s+(?P<count>\d+))?\s*$", re.IGNORECASE)
 
-# Flexible text lock command regex
 LOCK_COMMAND_PATTERN = re.compile(
     r"^(?:گودی\s+)?(?:(?:(قفل|ببند|باز\s*کن|حذف\s*قفل|بازکردن\s*قفل)\s+(.+))|(?:(.+?)\s+(رو|را)?\s*(قفل\s*کن|ببند|باز\s*کن)))$",
     re.IGNORECASE
 )
 
-# Text Welcome Toggle Pattern (Admin Only)
 WELCOME_CMD_PATTERN = re.compile(
     r"^(?:[/!])?(?:گودی\s+)?(خوش\s*آمد|خوشآمد|خوش\s*امد|خوشآمدگویی|خوش\s*آمدگویی|welcome)\s*(روشن|خاموش|on|off)$",
     re.IGNORECASE
@@ -166,7 +164,6 @@ ALL_LOCKS = {
     "hashtag": {"name": "هشتگ", "page": 2},
     "username": {"name": "یوزرنیم", "page": 2},
     "telegram_services": {"name": "سرویس تلگرام", "page": 2, "is_category": True},
-    # 4 Telegram Service Locks (Disabled by default)
     "service_join_link": {"name": "حذف پیام ورود با لینک", "page": 0, "is_service": True},
     "service_add_member": {"name": "حذف پیام افزودن عضو", "page": 0, "is_service": True},
     "service_pinned": {"name": "حذف پیام سنجاق شدن", "page": 0, "is_service": True},
@@ -203,37 +200,10 @@ LOCK_TEXT_ALIASES = {
     "فارسی": "persian", "پارسی": "persian",
     "هشتگ": "hashtag", "تگ هشتگ": "hashtag",
     "یوزرنیم": "username", "ایدی": "username", "آیدی": "username",
-    # Service Lock Text Aliases
-    "پیام ورود با لینک": "service_join_link",
-    "پیامِ ورود با لینک": "service_join_link",
-    "پیام ورود لینک": "service_join_link",
-    "پیام ورود": "service_join_link",
-    "پیامِ ورود": "service_join_link",
-    "ورود با لینک": "service_join_link",
-    "حذف پیام ورود با لینک": "service_join_link",
-    "پیام افزودن عضو": "service_add_member",
-    "پیامِ افزودن عضو": "service_add_member",
-    "پیام افزودن کاربر": "service_add_member",
-    "افزودن عضو": "service_add_member",
-    "اضافه کردن عضو": "service_add_member",
-    "حذف پیام افزودن عضو": "service_add_member",
-    "پیام سنجاق شدن": "service_pinned",
-    "پیامِ سنجاق شدن": "service_pinned",
-    "پیام سنجاق": "service_pinned",
-    "پیام پین": "service_pinned",
-    "پیامِ پین": "service_pinned",
-    "پیام پین شدن": "service_pinned",
-    "حذف پیام سنجاق شدن": "service_pinned",
-    "پیام‌های ویدیو چت": "service_video_chat",
-    "پیامهای ویدیو چت": "service_video_chat",
-    "پیام های ویدیو چت": "service_video_chat",
-    "پیام ویدیو چت": "service_video_chat",
-    "پیامِ ویدیو چت": "service_video_chat",
-    "ویدیو چت": "service_video_chat",
-    "ویس چت": "service_video_chat",
-    "پیام ویس چت": "service_video_chat",
-    "پیام‌های ویس چت": "service_video_chat",
-    "حذف پیام‌های ویدیو چت": "service_video_chat"
+    "پیام ورود با لینک": "service_join_link", "ورود با لینک": "service_join_link",
+    "پیام افزودن عضو": "service_add_member", "افزودن عضو": "service_add_member",
+    "پیام سنجاق شدن": "service_pinned", "پیام پین": "service_pinned",
+    "پیام‌های ویدیو چت": "service_video_chat", "ویدیو چت": "service_video_chat"
 }
 
 def fa_to_en_digits(text: str) -> str:
@@ -291,8 +261,7 @@ DEFAULT_POEMS = [
 ]
 
 def get_default_locks_structure() -> dict:
-    locks = {k: False for k in ALL_LOCKS.keys() if not ALL_LOCKS[k].get("is_category")}
-    return locks
+    return {k: False for k in ALL_LOCKS.keys() if not ALL_LOCKS[k].get("is_category")}
 
 def get_default_group_structure() -> dict:
     return {
@@ -378,14 +347,7 @@ def migrate_db_if_needed(data: dict) -> dict:
     if data.get("version") == 5:
         return data
 
-    logger.info("Migrating database to v5 (Per-Group Lock System)...")
-    if os.path.exists(DB_FILE):
-        backup_file = f"{DB_FILE}.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        try:
-            shutil.copyfile(DB_FILE, backup_file)
-        except Exception:
-            pass
-
+    logger.info("Migrating database to v5...")
     new_db = get_default_db_structure()
     for k in new_db.keys():
         if k in data and k != "states":
@@ -409,7 +371,6 @@ def load_db() -> dict:
         return _DB_CACHE
 
     default_struct = get_default_db_structure()
-
     if not os.path.exists(DB_FILE):
         _DB_CACHE = default_struct
         save_db(force=True)
@@ -636,8 +597,8 @@ async def dispatch_shutdown_message(bot, target_chat_id: int, shutdown_data: dic
         try:
             await bot.copy_message(chat_id=target_chat_id, from_chat_id=from_chat, message_id=msg_id, reply_to_message_id=reply_to_msg_id)
             return
-        except Exception as e:
-            logger.debug(f"copy_message fallback: {e}")
+        except Exception:
+            pass
 
     payload = shutdown_data.get("payload")
     if payload:
@@ -839,7 +800,7 @@ def set_cooldown_data(db: dict, chat_id: int, feature: str, data: dict):
     save_db()
 
 # ==========================================
-# WELCOME SYSTEM & DUPLICATE PROTECTION
+# WELCOME SYSTEM
 # ==========================================
 def check_and_set_welcome_duplicate(db: dict, chat_id: int, user_id: int) -> bool:
     g_data = get_group_data(db, chat_id)
@@ -910,7 +871,7 @@ async def send_welcome_to_member(context: ContextTypes.DEFAULT_TYPE, chat, user,
             await send_media_payload(context.bot, chat.id, temp_payload, reply_to_message_id=reply_to_message_id)
 
     except Exception as e:
-        logger.error(f"Error dispatching welcome in chat {getattr(chat, 'id', 'unknown')}: {e}")
+        logger.error(f"Error dispatching welcome in chat: {e}")
 
 async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.new_chat_members:
@@ -998,20 +959,14 @@ async def handle_welcome_text_command(update: Update, context: ContextTypes.DEFA
     save_db(force=True)
 
     if turn_on:
-        reply_html = (
-            f'<b>خوش‌آمدگویی گروه با موفقیت فعال شد!</b> '
-            f'<tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
-        )
+        reply_html = f'<b>خوش‌آمدگویی گروه با موفقیت فعال شد!</b> <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
     else:
-        reply_html = (
-            f'<b>خوش‌آمدگویی گروه با موفقیت غیرفعال شد!</b> '
-            f'<tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji>'
-        )
+        reply_html = f'<b>خوش‌آمدگویی گروه با موفقیت غیرفعال شد!</b> <tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji>'
 
     try:
         await msg.reply_text(reply_html, parse_mode=ParseMode.HTML)
     except Exception as e:
-        logger.error(f"Failed to respond to welcome command in {chat_id}: {e}")
+        logger.error(f"Failed to respond to welcome command: {e}")
 
     raise ApplicationHandlerStop()
 
@@ -1164,8 +1119,7 @@ async def periodic_group_reaction_job(context: ContextTypes.DEFAULT_TYPE):
                     reaction=[ReactionTypeEmoji(FIXED_REACTION)]
                 )
                 break
-            except Exception as e:
-                logger.debug(f"Reaction failed on user {uid} in {target_chat_id}: {e}")
+            except Exception:
                 continue
     except Exception as e:
         logger.error(f"Error in periodic_group_reaction_job: {e}")
@@ -1247,12 +1201,7 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     should_delete = False
 
-    # ------------------------------------------
-    # TELEGRAM SERVICE MESSAGES LOCKS
-    # ------------------------------------------
-    # 1. Join via Link vs Add Member
     if msg.new_chat_members:
-        # If user joined via invite link: msg.from_user is either member themselves or None
         is_join_by_link = False
         is_added_by_other = False
 
@@ -1268,11 +1217,9 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif is_added_by_other and locks.get("service_add_member", False):
             should_delete = True
 
-    # 2. Pinned Service Message
     if not should_delete and locks.get("service_pinned", False) and bool(getattr(msg, "pinned_message", None)):
         should_delete = True
 
-    # 3. Video Chat / Voice Chat Service Messages
     if not should_delete and locks.get("service_video_chat", False):
         has_vc_event = bool(
             getattr(msg, "video_chat_started", None) or
@@ -1286,9 +1233,6 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
         if has_vc_event:
             should_delete = True
 
-    # ------------------------------------------
-    # STANDARD CONTENT LOCKS (Non-Admin only)
-    # ------------------------------------------
     if not should_delete:
         if user and (user.is_bot or await is_admin_or_owner(context, chat.id, user.id)):
             return
@@ -1361,9 +1305,8 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
     if should_delete:
         try:
             await msg.delete()
-        except Exception as e:
-            logger.debug(f"Failed to delete locked message in {chat.id}: {e}")
-        # If deleted message was new_chat_members, do not stop pipeline so welcome handler can run
+        except Exception:
+            pass
         if not bool(msg.new_chat_members):
             raise ApplicationHandlerStop()
 
@@ -1483,11 +1426,7 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
         name1 = meta1['name']
 
         if meta1.get("is_category"):
-            btn1 = InlineKeyboardButton(
-                name1,
-                callback_data=f"panel_service_locks:{chat_id}",
-                style=None
-            )
+            btn1 = InlineKeyboardButton(name1, callback_data=f"panel_service_locks:{chat_id}", style=None)
         else:
             is_on1 = locks.get(k1, False)
             btn1 = InlineKeyboardButton(
@@ -1503,11 +1442,7 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
             meta2 = ALL_LOCKS[k2]
             name2 = meta2['name']
             if meta2.get("is_category"):
-                btn2 = InlineKeyboardButton(
-                    name2,
-                    callback_data=f"panel_service_locks:{chat_id}",
-                    style=None
-                )
+                btn2 = InlineKeyboardButton(name2, callback_data=f"panel_service_locks:{chat_id}", style=None)
             else:
                 is_on2 = locks.get(k2, False)
                 btn2 = InlineKeyboardButton(
@@ -2006,7 +1941,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="cancel_current_flow", style="danger")]])
-        await query.message.edit_text("<b>پیام خاموشی را ارسال کنید:</b>\n\n(متن، عکس، گیف، ویدیو، استیکر و... بدون تغییر ذخیره می‌شود)", reply_markup=kb, parse_mode=ParseMode.HTML)
+        await query.message.edit_text("<b>پیام خاموشی را ارسال کنید:</b>\n\n(متن، عکس، گیف، ویدیو، استیکر و... ذخیره می‌شود)", reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
     # USER BAN & UNBAN
@@ -2717,30 +2652,22 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             save_db()
 
             m1_txt = get_user_mention(game["p1_id"], game["p1_name"]) if game.get("p1_id") else ""
+            txt = (
+                '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
+                '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
+            )
             if m1_txt:
-                txt = (
-                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
-                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
-                    f'<b>شرکت کنندگان :</b>\n<b>{m1_txt}</b>\n\n'
-                    '<b>- یک نفر دیگه تموممممه! کسی نبودد؟ <tg-emoji emoji-id="5431776939465516694">🔥</tg-emoji></b>\n'
-                    '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
-                )
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success", icon_custom_emoji_id="5889002570633977838"), InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger", icon_custom_emoji_id="5888594273862950655")],
-                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger", icon_custom_emoji_id="5848202125078699135")]
-                ])
-            else:
-                txt = (
-                    '<b><tg-emoji emoji-id="5816739230482701944">⚡️</tg-emoji> میبینم به یکم هیجان نیاز دارین! <tg-emoji emoji-id="5818785846823755322">😻</tg-emoji></b>\n\n'
-                    '<b>آماده بازی دوز هستین بچهااااا؟ <tg-emoji emoji-id="5818984798298841943">⏳</tg-emoji></b>\n\n'
-                    '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
-                )
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success", icon_custom_emoji_id="5889002570633977838")],
-                    [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger", icon_custom_emoji_id="5848202125078699135")]
-                ])
+                txt += f'<b>شرکت کنندگان :</b>\n<b>{m1_txt}</b>\n\n<b>- یک نفر دیگه تموممممه! کسی نبودد؟ <tg-emoji emoji-id="5431776939465516694">🔥</tg-emoji></b>\n'
+            txt += '<b>با استفاده از دکمه زیر به دوز بپیوندید :</b>'
+            
+            kb_list = [
+                [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success", icon_custom_emoji_id="5889002570633977838")]
+            ]
+            if m1_txt:
+                kb_list[0].append(InlineKeyboardButton("انصراف", callback_data=f"xo_leave:{game_id}", style="danger", icon_custom_emoji_id="5888594273862950655"))
+            kb_list.append([InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger", icon_custom_emoji_id="5848202125078699135")])
 
-            await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+            await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb_list), parse_mode=ParseMode.HTML)
             await query.answer("شما از بازی انصراف دادید.")
             return
 
@@ -3008,7 +2935,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("اطلاعات یافت نشد!", show_alert=True)
         return
 
-    # COUPLES / SHIPS
+    # COUPLES / SHIPS (VOTING SYSTEM WITH 30 SECONDS TIMEOUT)
     elif data in ["couple_agree", "couple_disagree"]:
         msg_id = str(query.message.message_id)
         couples = db.get("couples", {})
@@ -3064,7 +2991,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
             f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
             f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان: {agrees_text}</b>\n'
-            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مخالفان: {disagrees_text}</b>'
+            f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان: {disagrees_text}</b>'
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -3408,7 +3335,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reason_str=reason
                     )
 
-                    report_status = "✅ پیام به PV کاربر ارسال شد." if pv_sent else "⚠️ کاربر بن شد ولی ارسال پیام به PV ناموفق بود (ربات بلاک است یا استارت نشده)."
+                    report_status = "✅ پیام به PV کاربر ارسال شد." if pv_sent else "⚠️ کاربر بن شد ولی ارسال پیام به PV ناموفق بود."
                     await update.message.reply_text(
                         f"🚨 <b>کاربر <code>{target_uid}</code> با موفقیت بن شد.</b>\n"
                         f"⏰ مدت: <b>{dur_display}</b>\n"
@@ -3530,7 +3457,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     db["cooldown_minutes"] = mins
                     mark_db_dirty()
                     save_db(force=True)
-                    await update.message.reply_text(f"✅ زمان محدودیت به {mins} دقیقه تغییر یافت.")
+                    await update.message.reply_text(f"✅ زمان محدودیت (Cooldown) به {mins} دقیقه تغییر یافت.")
                 except Exception:
                     await update.message.reply_text(
                         f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مقدار وارد شده نامعتبر است.</b>',
@@ -3576,7 +3503,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 report_content = "\n".join(report_lines)
                 file_bytes = io.BytesIO(report_content.encode("utf-8"))
                 file_bytes.name = f"search_{target_cid}.txt"
-                await update.message.reply_document(document=file_bytes, caption=f"🔎 نتایج جستجوی <code>{query_word}</code> در تاریخچه ثبت‌شده گروه", parse_mode=ParseMode.HTML)
+                await update.message.reply_document(document=file_bytes, caption=f"🔎 نتایج جستجوی <code>{query_word}</code>", parse_mode=ParseMode.HTML)
                 return
 
             if u_str in db["states"].get("broadcast_builder", {}):
@@ -4163,15 +4090,22 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
         # --------------------------------------
-        # FUN FEATURES (GROUP ONLY)
+        # FUN FEATURES WITH PREMIUM EMOJIS & COOLDOWN
         # --------------------------------------
-        elif is_group and norm_text in ["خوشتیپ کیه", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
+        # ۲. خوشتیپ / خوژتیپ
+        elif is_group and norm_text in ["خوشتیپ کیه", "خوشتیپ کی", "خوژتیپ کیه", "خوژتیپ کی", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
             word_label = "خوژتیپ" if "خوژ" in norm_text else "خوشتیپ"
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "handsome")
+            
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                await update.message.reply_text(f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
+                msg = (
+                    f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5321484996802797866">😎</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>- ولی خب {m_rem} دقیقه دیگه {word_label} بعدی معرفی میشه! <tg-emoji emoji-id="5323417298294298902">🙂</tg-emoji></b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -4179,14 +4113,25 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "handsome", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "handsome")
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5321484996802797866">😎</tg-emoji> | {target_mention}</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        elif is_group and norm_text in ["جنده کیه", "جنده"] and features.get("jende", True):
+        # ۳. جنده
+        elif is_group and norm_text in ["جنده کیه", "جنده کی", "جنده"] and features.get("jende", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jende")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                await update.message.reply_text(f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
+                msg = (
+                    f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>+ ولی خب هر جندگی دائمی نیست! {m_rem} دقیقه دیگه جنده بعدی معرفی میشه! <tg-emoji emoji-id="4974573543342736117">🖤</tg-emoji></b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -4194,14 +4139,25 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "jende", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "jendegi")
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        elif is_group and norm_text in ["کونی کیه", "کونی"] and features.get("koni", True):
+        # ۴. کونی
+        elif is_group and norm_text in ["کونی کیه", "کونی کی", "کونی"] and features.get("koni", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koni")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                await update.message.reply_text(f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
+                msg = (
+                    f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>+ ولی خب {m_rem} دقیقه دیگه کونی بعدی معرفی میشه! <tg-emoji emoji-id="4974672507979170737">🍌</tg-emoji></b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -4209,14 +4165,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "koni", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "koni")
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        elif is_group and norm_text in ["جقی", "جقی کیه"] and features.get("jaghi", True):
+        # ۵. جقی
+        elif is_group and norm_text in ["جقی", "جقی کیه", "جقی گروه"] and features.get("jaghi", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jaghi")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                await update.message.reply_text(f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
+                msg = (
+                    f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="4974362376980660892">🍌</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>+ بزن که خوب میزنی رفیق گلم! <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji></b>\n'
+                    f'<b>- ولی این جق ابدی نیست! {m_rem} دقیقه دیگه جقی بعدیو معرفی میکنم.</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -4224,14 +4192,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "jaghi", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "jaghi")
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="4974362376980660892">🍌</tg-emoji> | {target_mention}</b>\n\n'
+                        f'<b>+ بزن که خوب میزنی رفیق گلم! <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji></b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        elif is_group and norm_text in ["کصخل", "کسخل"] and features.get("koskhal", True):
+        # ۶. کصخل / کسخل
+        elif is_group and norm_text in ["کصخل", "کسخل", "کصخل گروه", "کسخل گروه"] and features.get("koskhal", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koskhal")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                await update.message.reply_text(f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه: {target_mention} ({m_rem} دقیقه بعد نفر بعدی)</b>', parse_mode=ParseMode.HTML)
+                msg = (
+                    f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5861747442612964510">🤙</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>+ هر کصخلی درمانی دارد! {m_rem} دقیقه دیگه کصخل بعدیو معرفی میکنم.</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -4239,14 +4219,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "koskhal", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "kos_khali")
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5861747442612964510">🤙</tg-emoji> | {target_mention}</b>\n\n'
+                        f'<b>+ هر کصخلی درمانی دارد!</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
+        # ۷. سکسی
         elif is_group and norm_text in ["سکسی", "سکسی گروه"] and features.get("sexy", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "sexy")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                await update.message.reply_text(f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه: {target_mention}</b>', parse_mode=ParseMode.HTML)
+                msg = (
+                    f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5247009821508537591">🚬</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>+ ولی خب {m_rem} دقیقه دیگه سکسی بعدیو معرفی میکنم.</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -4254,14 +4246,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "sexy", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "sexy")
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5247009821508537591">🚬</tg-emoji> | {target_mention}</b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
+        # ادامه ۸. جذاب (تکمیل شده)
         elif is_group and norm_text in ["جذاب", "جذاب گروه"] and features.get("jazab", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jazab")
             if is_cd:
                 m_rem = rem_sec // 60
                 target_mention = get_user_mention(cd_data["id"], cd_data["fullname"])
-                await update.message.reply_text(f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه: {target_mention}</b>', parse_mode=ParseMode.HTML)
+                msg = (
+                    f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5774059410317905809">❤️</tg-emoji> | {target_mention}</b>\n\n'
+                    f'<b>عشقمممم شماره میدی پاره کنیم؟؟؟ <tg-emoji emoji-id="5773636884320226590">💋</tg-emoji></b>\n'
+                    f'<b>+ {m_rem} دقیقه دیگه جذاب بعدیو معرفی میکنم.</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
             else:
                 m_tuple = await get_fast_random_member(context, chat_id, db)
                 if m_tuple:
@@ -4269,18 +4273,37 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_mention = get_user_mention(int(tid), info["fullname"])
                     set_cooldown_data(db, chat_id, "jazab", {"id": int(tid), "fullname": info["fullname"]})
                     increment_user_stat(db, int(tid), "jazab")
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
+                    
+                    msg = (
+                        f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه :</b>\n\n'
+                        f'<b><tg-emoji emoji-id="5774059410317905809">❤️</tg-emoji> | {target_mention}</b>\n\n'
+                        f'<b>عشقمممم شماره میدی پاره کنیم؟؟؟ <tg-emoji emoji-id="5773636884320226590">💋</tg-emoji></b>'
+                    )
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        # --------------------------------------
-        # COUPLE / SHIP SYSTEM (GROUP ONLY)
-        # --------------------------------------
+        # ۹. شیپ / کاپل (با مهلت ۳۰ ثانیه و نمایش آرا در کول‌دان)
         elif is_group and norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
             if is_cd:
                 m_rem = rem_sec // 60
                 name1 = get_user_mention(cd_data["u1"]["id"], cd_data["u1"]["name"])
                 name2 = get_user_mention(cd_data["u2"]["id"], cd_data["u2"]["name"])
-                msg = f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> کاپل فعلی: {name1} 💕 {name2} ({m_rem} دقیقه بعد کاپل بعدی)</b>'
+                
+                last_msg_id = cd_data.get("last_msg_id")
+                couple_data = db.get("couples", {}).get(str(last_msg_id), {}) if last_msg_id else {}
+                agrees = couple_data.get("agrees", [])
+                disagrees = couple_data.get("disagrees", [])
+
+                agrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in agrees]) if agrees else "هیچکس"
+                disagrees_text = ", ".join([get_user_mention(u["id"], u["name"]) for u in disagrees]) if disagrees else "هیچکس"
+
+                msg = (
+                    f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان ثبت شده: {agrees_text}</b>\n'
+                    f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان ثبت شده : {disagrees_text}</b>\n\n'
+                    f'<b>+ {m_rem} دقیقه دیگه کاپل بعدیو میگم بچهااااا!<tg-emoji emoji-id="5816460319601467354">😺</tg-emoji></b>'
+                )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
             else:
                 m1 = await get_fast_random_member(context, chat_id, db)
@@ -4288,6 +4311,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if m1 and m2 and m1[0] != m2[0]:
                     u1_dict = {"id": int(m1[0]), "name": m1[1]['fullname']}
                     u2_dict = {"id": int(m2[0]), "name": m2[1]['fullname']}
+                    
                     increment_user_stat(db, u1_dict["id"], "ship")
                     increment_user_stat(db, u2_dict["id"], "ship")
 
@@ -4295,21 +4319,24 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     name2 = get_user_mention(u2_dict["id"], u2_dict["name"])
 
                     kb = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("موافقم", callback_data="couple_agree", style="success", icon_custom_emoji_id="5411228694935012881"),
-                         InlineKeyboardButton("افتضاح", callback_data="couple_disagree", style="danger", icon_custom_emoji_id="5411484842489578182")]
+                        [
+                            InlineKeyboardButton("موافقم", callback_data="couple_agree", style="success", icon_custom_emoji_id="5411228694935012881"),
+                            InlineKeyboardButton("افتضاح", callback_data="couple_disagree", style="danger", icon_custom_emoji_id="5411484842489578182")
+                        ]
                     ])
 
                     sent_msg = await update.message.reply_text(
                         f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
                         f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
                         f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان: هیچکس</b>\n'
-                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مخالفان: هیچکس</b>',
+                        f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان: هیچکس</b>',
                         reply_markup=kb,
                         parse_mode=ParseMode.HTML
                     )
 
-                    couples = db.setdefault("couples", {})
-                    couples[str(sent_msg.message_id)] = {
+                    if "couples" not in db:
+                        db["couples"] = {}
+                    db["couples"][str(sent_msg.message_id)] = {
                         "u1": u1_dict,
                         "u2": u2_dict,
                         "agrees": [],
@@ -4319,13 +4346,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     set_cooldown_data(db, chat_id, "ship", {"u1": u1_dict, "u2": u2_dict, "last_msg_id": sent_msg.message_id})
                 else:
                     await update.message.reply_text(
-                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> اعضای کافی موجود نیست!</b>',
+                        '<b>❌ اعضای کافی موجود نیست! <tg-emoji emoji-id="5857415006022278161">❌</tg-emoji></b>',
                         parse_mode=ParseMode.HTML
                     )
 
-        # --------------------------------------
-        # FOOD & POEM (Group Isolated - GROUP ONLY)
-        # --------------------------------------
+        # غذا
         elif is_group and ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
             g_data = get_group_data(db, chat_id)
             fl = g_data.get("foods", DEFAULT_FOODS)
@@ -4333,6 +4358,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 selected_food = random.choice(fl)
                 await update.message.reply_text(f'<b><tg-emoji emoji-id="5418248505447698083">🧽</tg-emoji> ایده غذای گروه: {html.escape(selected_food)}</b>', parse_mode=ParseMode.HTML)
 
+        # شعر
         elif is_group and norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
             g_data = get_group_data(db, chat_id)
             custom_names = g_data.get("custom_names", [])
@@ -4347,9 +4373,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             final_poem = poem_template.format(name=target_name)
             await update.message.reply_text(f'<tg-emoji emoji-id="5859527571586161695">✍️</tg-emoji> <b>{final_poem}</b>', parse_mode=ParseMode.HTML)
 
-        # --------------------------------------
-        # LEF DETECTION (GROUP ONLY)
-        # --------------------------------------
+        # لف
         elif is_group and LEF_PATTERN.search(raw_text) and features.get("lef", True):
             g_data = get_group_data(db, chat_id)
             ml = g_data.get("media_lef") or db.get("media_lef")
@@ -4426,4 +4450,4 @@ def main():
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    main()
+    main()        
