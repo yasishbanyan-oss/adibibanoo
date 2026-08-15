@@ -102,6 +102,12 @@ LOCK_COMMAND_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# Text Welcome Toggle Pattern (Admin Only)
+WELCOME_CMD_PATTERN = re.compile(
+    r"^(?:[/!])?(?:گودی\s+)?(خوش\s*آمد|خوشآمد|خوش\s*امد|خوشامدگویی|خوش\s*آمدگویی|welcome)\s*(روشن|خاموش|on|off)$",
+    re.IGNORECASE
+)
+
 URL_REGEX = re.compile(r"(https?://\S+|t\.me/\S+|telegram\.me/\S+|www\.\S+)", re.IGNORECASE)
 ENGLISH_CHAR_REGEX = re.compile(r"[a-zA-Z]")
 PERSIAN_CHAR_REGEX = re.compile(r"[\u0600-\u06FF\uFB8A\u067E\u0686\u06AF\u200C\u200D]")
@@ -761,7 +767,188 @@ def set_cooldown_data(db: dict, chat_id: int, feature: str, data: dict):
     save_db()
 
 # ==========================================
-# WELCOME & AUTOMATIC CHANNEL COMMENT & JOBS
+# WELCOME SYSTEM & DUPLICATE PROTECTION
+# ==========================================
+def check_and_set_welcome_duplicate(db: dict, chat_id: int, user_id: int) -> bool:
+    """
+    Returns True if welcome was already sent recently (within 45s), else False and records.
+    """
+    g_data = get_group_data(db, chat_id)
+    history = g_data.setdefault("recent_welcomed_users", {})
+    now_ts = datetime.now().timestamp()
+    uid_str = str(user_id)
+
+    # Clean old records > 120 seconds
+    for k in list(history.keys()):
+        if now_ts - history[k] > 120:
+            del history[k]
+
+    if uid_str in history and (now_ts - history[uid_str]) < 45:
+        return True
+
+    history[uid_str] = now_ts
+    if len(history) > 20:
+        oldest = min(history.keys(), key=lambda k: history[k])
+        del history[oldest]
+
+    mark_db_dirty()
+    save_db()
+    return False
+
+async def send_welcome_to_member(context: ContextTypes.DEFAULT_TYPE, chat, user, reply_to_message_id: int | None = None):
+    try:
+        if not user or user.is_bot:
+            return
+
+        db = load_db()
+        g_data = get_group_data(db, chat.id)
+        welcome_settings = g_data.get("welcome", {})
+
+        if not welcome_settings.get("enabled", True):
+            return
+
+        if check_and_set_welcome_duplicate(db, chat.id, user.id):
+            return
+
+        day_fa, time_str = get_persian_date_info()
+        chat_title = html.escape(chat.title or "گروه")
+        user_mention = get_user_mention(user.id, user.full_name or "کاربر")
+
+        if not welcome_settings.get("custom", False):
+            default_text = f"سلام {user_mention} ، به گروه {chat_title} خوش آمدید!\nساعت {time_str} روز {day_fa}!"
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=default_text,
+                parse_mode=ParseMode.HTML,
+                reply_to_message_id=reply_to_message_id
+            )
+            return
+
+        payload = welcome_settings.get("payload")
+        if payload:
+            raw_text = payload.get("text") or payload.get("caption") or ""
+            formatted_text = (
+                raw_text.replace("USERNAME", user_mention)
+                .replace("{name}", user_mention)
+                .replace("XXXX", chat_title)
+                .replace("TIME", time_str)
+                .replace("DAY", day_fa)
+            )
+            temp_payload = dict(payload)
+            if "text" in temp_payload:
+                temp_payload["text"] = formatted_text
+            if "caption" in temp_payload:
+                temp_payload["caption"] = formatted_text
+            await send_media_payload(context.bot, chat.id, temp_payload, reply_to_message_id=reply_to_message_id)
+
+    except Exception as e:
+        logger.error(f"Error dispatching welcome in chat {getattr(chat, 'id', 'unknown')}: {e}")
+
+async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.new_chat_members:
+        return
+    chat = update.effective_chat
+    reply_id = update.message.message_id
+    for member in update.message.new_chat_members:
+        if not member.is_bot:
+            await send_welcome_to_member(context, chat, member, reply_to_message_id=reply_id)
+
+async def handle_chat_member_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = update.chat_member
+    if not result:
+        return
+
+    chat = result.chat
+    if not chat or chat.type not in ["group", "supergroup"]:
+        return
+
+    user = result.new_chat_member.user
+    if not user or user.is_bot:
+        return
+
+    old_status = result.old_chat_member.status
+    new_status = result.new_chat_member.status
+
+    # True join detection: user was left/banned/not present and became member/restricted
+    was_member = old_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
+    is_now_member = new_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED]
+
+    if not was_member and is_now_member:
+        if new_status == ChatMemberStatus.RESTRICTED:
+            if not getattr(result.new_chat_member, "is_member", True):
+                return
+        await send_welcome_to_member(context, chat, user, reply_to_message_id=None)
+
+# ==========================================
+# TEXT WELCOME COMMAND HANDLER (ADMIN ONLY)
+# ==========================================
+async def handle_welcome_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg or not msg.text:
+        return
+
+    chat = update.effective_chat
+    if not chat or chat.type not in ["group", "supergroup"]:
+        return
+
+    user = update.effective_user
+    if not user:
+        return
+
+    raw_text = msg.text.strip()
+    norm_cmd = raw_text.replace("\u200c", " ").strip().lower()
+    norm_cmd = re.sub(r"\s+", " ", norm_cmd)
+
+    match = WELCOME_CMD_PATTERN.match(norm_cmd)
+    if not match:
+        return
+
+    chat_id = chat.id
+    user_id = user.id
+
+    if not await is_admin_or_owner(context, chat_id, user_id):
+        return
+
+    action_term = match.group(2).lower()
+    turn_on = action_term in ["روشن", "on"]
+
+    db = load_db()
+    g_data = get_group_data(db, chat_id)
+    w_set = g_data.setdefault("welcome", {"enabled": True, "custom": False})
+    w_set["enabled"] = turn_on
+
+    action_label = "فعال" if turn_on else "غیرفعال"
+    log_admin_action(
+        db,
+        user_id,
+        user.full_name or "ادمین",
+        chat.title or "گروه",
+        chat_id,
+        "دستور متنی خوش‌آمدگویی",
+        f"وضعیت جدید: {action_label}"
+    )
+    mark_db_dirty()
+    save_db(force=True)
+
+    if turn_on:
+        reply_html = (
+            f'<b>خوش‌آمدگویی گروه با موفقیت فعال شد!</b> '
+            f'<tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
+        )
+    else:
+        reply_html = (
+            '<b>خوش‌آمدگویی گروه با موفقیت غیرفعال شد!</b> ❌'
+        )
+
+    try:
+        await msg.reply_text(reply_html, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Failed to respond to welcome command in {chat_id}: {e}")
+
+    raise ApplicationHandlerStop()
+
+# ==========================================
+# AUTOMATIC CHANNEL COMMENT & JOBS
 # ==========================================
 async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = update.my_chat_member
@@ -801,52 +988,6 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 jobs = context.job_queue.get_jobs_by_name(jname)
                 for j in jobs:
                     j.schedule_removal()
-
-async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.new_chat_members:
-        return
-
-    chat = update.effective_chat
-    db = load_db()
-    g_data = get_group_data(db, chat.id)
-    welcome_settings = g_data.get("welcome", {})
-    
-    if not welcome_settings.get("enabled", True):
-        return
-
-    day_fa, time_str = get_persian_date_info()
-    chat_title = html.escape(chat.title or "گروه")
-
-    for member in update.message.new_chat_members:
-        if member.is_bot:
-            continue
-
-        user_mention = get_user_mention(member.id, member.full_name)
-
-        if not welcome_settings.get("custom", False):
-            default_text = f"سلام {user_mention} ، به گروه {chat_title} خوش آمدید!\nساعت {time_str} روز {day_fa}!"
-            try:
-                await update.message.reply_text(default_text, parse_mode=ParseMode.HTML)
-            except Exception as e:
-                logger.error(f"Error sending default welcome: {e}")
-            continue
-
-        payload = welcome_settings.get("payload")
-        if payload:
-            raw_text = payload.get("text") or payload.get("caption") or ""
-            formatted_text = (
-                raw_text.replace("USERNAME", user_mention)
-                .replace("{name}", user_mention)
-                .replace("XXXX", chat_title)
-                .replace("TIME", time_str)
-                .replace("DAY", day_fa)
-            )
-            temp_payload = dict(payload)
-            if "text" in temp_payload:
-                temp_payload["text"] = formatted_text
-            if "caption" in temp_payload:
-                temp_payload["caption"] = formatted_text
-            await send_media_payload(context.bot, chat.id, temp_payload, reply_to_message_id=update.message.message_id)
 
 async def handle_automatic_channel_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -1182,7 +1323,7 @@ async def render_group_admin_panel_message(query, chat_id: int):
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 # ==========================================
-# PER-GROUP LOCKS PANEL RENDERING (FIXED PAGINATION)
+# PER-GROUP LOCKS PANEL RENDERING
 # ==========================================
 async def render_group_locks_panel(query, chat_id: int, page: int = 1):
     db = load_db()
@@ -3988,33 +4129,46 @@ def main():
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, enforce_group_locks), group=-5)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.UpdateType.EDITED_MESSAGE, enforce_group_locks), group=-5)
 
+    # 2. Text Welcome Toggle Command (Group -4) - Admin only
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND),
+            handle_welcome_text_command
+        ),
+        group=-4
+    )
+
+    # 3. Automatic comment for channel connected discussion group
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.IS_AUTOMATIC_FORWARD, handle_automatic_channel_comments), group=-3)
+
+    # 4. Welcome system (ChatMember event + Service Message fallback)
+    app.add_handler(ChatMemberHandler(handle_chat_member_welcome, ChatMemberHandler.CHAT_MEMBER), group=-2)
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
+
+    # Chat Member Tracking for bot itself
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
+
+    # General callback & command handlers
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", command_start))
     app.add_handler(CommandHandler("panel", command_owner_panel))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
-    # 2. Automatic comment for channel connected discussion group
-    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.IS_AUTOMATIC_FORWARD, handle_automatic_channel_comments), group=-3)
-
-    # 3. Welcome system
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
-
-    # 4. Dwoz game
+    # 5. Dwoz game
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler),
         group=-1
     )
 
-    # 5. General message handler
+    # 6. General message handler
     app.add_handler(
         MessageHandler(filters.ALL & (~filters.COMMAND), handle_messages)
     )
 
     app.add_error_handler(global_error_handler)
 
-    logger.info("Bot is running with full per-group lock system...")
+    logger.info("Bot is running with full per-group lock & enhanced welcome system...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
