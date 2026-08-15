@@ -4457,6 +4457,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if ml:
                 await send_media_payload(context.bot, chat_id, ml)
             return
+
+    except Exception:
+        logger.exception("Error in handle_messages:")
+
 # ==========================================
 # GLOBAL ERROR HANDLER & MAIN
 # ==========================================
