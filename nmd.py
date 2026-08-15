@@ -9,7 +9,6 @@ import shutil
 import sys
 import asyncio
 import threading
-import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -19,7 +18,6 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     ReactionTypeEmoji,
-    MessageEntity
 )
 from telegram.constants import ParseMode, ChatMemberStatus, PollType, MessageEntityType
 from telegram.ext import (
@@ -40,16 +38,15 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8618205537:AAFCjx1_PkdC43ezimZgp-z5PAx0JKEmJ
 OWNER_ID = int(os.getenv("OWNER_ID", "6749949992"))
 DB_FILE = "db.json"
 TEMP_DB_FILE = "db.json.tmp"
-BROKEN_DB_FILE = "db.json.broken"
 
 MAX_FUN_MESSAGES = 20
-BROADCAST_CANCEL_FLAG = False
 
 # Fixed Reaction
 FIXED_REACTION = "❤️"
 
-# Custom Emoji for Checkmark
+# Custom Emojis
 CHECK_CUSTOM_EMOJI_ID = "5830144944399981619"
+CANDY_CUSTOM_EMOJI_ID = "6046300980436278776"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -169,16 +166,6 @@ def fa_to_en_digits(text: str) -> str:
     if not text:
         return "0"
     return "".join(PERSIAN_PERMUTATIONS.get(ch, ch) for ch in text)
-
-def clean_chat_id(text: str) -> int | None:
-    if not text:
-        return None
-    t = text.replace("–", "-").replace("—", "-").replace("−", "-").strip()
-    t = fa_to_en_digits(t)
-    try:
-        return int(t)
-    except ValueError:
-        return None
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -330,7 +317,7 @@ def migrate_db_if_needed(data: dict) -> dict:
             new_db[k] = data[k]
 
     groups = new_db.setdefault("groups", {})
-    for cid_str, g_val in groups.items():
+    for _, g_val in groups.items():
         if "locks" not in g_val or not isinstance(g_val["locks"], dict):
             g_val["locks"] = get_default_locks_structure()
         else:
@@ -387,9 +374,6 @@ def save_db(force: bool = False):
     except Exception as e:
         logger.error(f"Error saving DB: {e}")
 
-# ==========================================
-# STATE MANAGEMENT & CLEANUP
-# ==========================================
 def get_session_key(user_id: int, chat_id: int) -> str:
     return f"{user_id}_{chat_id}"
 
@@ -472,11 +456,7 @@ def is_group_globally_banned(db: dict, chat_id: int) -> tuple[bool, dict | None]
     return True, ban_info
 
 async def send_premium_ban_notification(bot, chat_id: int, is_group: bool, duration_str: str, reason_str: str) -> bool:
-    if is_group:
-        title = "گروه شما از ربات گودی بن شد!"
-    else:
-        title = "شما از ربات گودی بن شدید!"
-
+    title = "گروه شما از ربات گودی بن شد!" if is_group else "شما از ربات گودی بن شدید!"
     esc_title = html.escape(title)
     esc_dur = html.escape(duration_str)
     esc_reason = html.escape(reason_str)
@@ -488,35 +468,20 @@ async def send_premium_ban_notification(bot, chat_id: int, is_group: bool, durat
     )
 
     try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=html_text,
-            parse_mode=ParseMode.HTML
-        )
+        await bot.send_message(chat_id=chat_id, text=html_text, parse_mode=ParseMode.HTML)
         return True
     except Exception as e:
         logger.warning(f"Could not deliver Ban notification to chat {chat_id}: {e}")
         return False
 
 async def send_premium_unban_notification(bot, chat_id: int, is_group: bool = False) -> bool:
-    if is_group:
-        header = "تبریک! "
-        sub = "گروه شما از محدودیت ربات خارج شد."
-    else:
-        header = "تبریک! "
-        sub = "شما از محدودیت ربات خارج شدید."
-
+    sub = "گروه شما از محدودیت ربات خارج شد." if is_group else "شما از محدودیت ربات خارج شدید."
     html_text = (
-        f'<b>{header}</b><tg-emoji emoji-id="5818785846823755322">🎉</tg-emoji>\n\n'
+        f'<b>تبریک! </b><tg-emoji emoji-id="5818785846823755322">🎉</tg-emoji>\n\n'
         f'<b>{sub}</b> <tg-emoji emoji-id="5816739230482701944">✨</tg-emoji>'
     )
-
     try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=html_text,
-            parse_mode=ParseMode.HTML
-        )
+        await bot.send_message(chat_id=chat_id, text=html_text, parse_mode=ParseMode.HTML)
         return True
     except Exception as e:
         logger.warning(f"Could not deliver Unban notification to {chat_id}: {e}")
@@ -584,15 +549,10 @@ async def dispatch_shutdown_message(bot, target_chat_id: int, shutdown_data: dic
     msg_id = shutdown_data.get("message_id")
     if from_chat and msg_id:
         try:
-            await bot.copy_message(
-                chat_id=target_chat_id,
-                from_chat_id=from_chat,
-                message_id=msg_id,
-                reply_to_message_id=reply_to_msg_id
-            )
+            await bot.copy_message(chat_id=target_chat_id, from_chat_id=from_chat, message_id=msg_id, reply_to_message_id=reply_to_msg_id)
             return
         except Exception as e:
-            logger.debug(f"copy_message for shutdown fallback: {e}")
+            logger.debug(f"copy_message fallback: {e}")
 
     payload = shutdown_data.get("payload")
     if payload:
@@ -615,13 +575,11 @@ def resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> t
     fname = user.full_name or user.first_name or "کاربر"
     uname = user.username or ""
     mention = get_user_mention(uid, fname)
-
     return uid, fname, uname, mention
 
 def log_admin_action(db: dict, admin_id: int, admin_name: str, chat_title: str, chat_id: int, action_type: str, details: str):
     admin_logs = db.setdefault("admin_logs", [])
     now_str = get_persian_date_str()
-
     log_entry = {
         "admin_id": admin_id,
         "admin_name": admin_name,
@@ -631,17 +589,12 @@ def log_admin_action(db: dict, admin_id: int, admin_name: str, chat_title: str, 
         "details": details,
         "timestamp": now_str
     }
-
     admin_logs.append(log_entry)
     if len(admin_logs) > 1000:
         admin_logs.pop(0)
-
     mark_db_dirty()
     save_db()
 
-# ==========================================
-# HELPER FUNCTIONS & STATS
-# ==========================================
 def get_user_mention(user_id: int, fullname: str) -> str:
     clean_name = html.escape(fullname)
     return f'<a href="tg://user?id={user_id}">{clean_name}</a>'
@@ -752,7 +705,7 @@ async def register_member(update: Update, db: dict):
         
     save_db()
 
-async def get_fast_random_member(context: ContextTypes.DEFAULT_TYPE, chat_id: int, db: dict) -> tuple:
+async def get_fast_random_member(context: ContextTypes.DEFAULT_TYPE, chat_id: int, db: dict) -> tuple | None:
     chat_str = str(chat_id)
     recent = db.get("recent_active_users", {}).get(chat_str, [])
     valid_recent = []
@@ -954,9 +907,6 @@ async def hourly_goh_khor_job(context: ContextTypes.DEFAULT_TYPE):
     mark_db_dirty()
     save_db(force=True)
 
-# ==========================================
-# 5-MINUTE PERIODIC RANDOM REACTION JOB
-# ==========================================
 async def periodic_group_reaction_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         target_chat_id = context.job.chat_id
@@ -1029,23 +979,19 @@ async def global_security_guard(update: Update, context: ContextTypes.DEFAULT_TY
         chat = update.effective_chat
         db = load_db()
 
-        # 1. Check Group Global Ban FIRST (Blocks ANY message from executing in this group)
         if chat and chat.type in ["group", "supergroup"]:
             g_banned, _ = is_group_globally_banned(db, chat.id)
             if g_banned:
                 raise ApplicationHandlerStop()
 
-        # 2. OWNER Bypass (for Private/Admin control only)
         if user and int(user.id) == int(OWNER_ID):
             return
 
-        # 3. Check User Global Ban
         if user:
             is_banned, _ = is_user_globally_banned(db, user.id)
             if is_banned:
                 raise ApplicationHandlerStop()
 
-        # 4. Check Bot Shutdown
         if db.get("bot_shutdown", False):
             is_command = update.message and update.message.text and update.message.text.startswith("/")
             is_private = chat and chat.type == "private"
@@ -1069,7 +1015,6 @@ async def global_security_guard(update: Update, context: ContextTypes.DEFAULT_TY
 # GROUP LOCK ENFORCER (MIDDLEWARE GROUP -5)
 # ==========================================
 async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enforces active group locks on non-admin members with high performance."""
     chat = update.effective_chat
     user = update.effective_user
     msg = update.message or update.edited_message
@@ -1077,7 +1022,6 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not chat or chat.type not in ["group", "supergroup"] or not user or not msg:
         return
 
-    # Whitelist bot and authorized admins/owner
     if user.is_bot or await is_admin_or_owner(context, chat.id, user.id):
         return
 
@@ -1085,14 +1029,12 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
     g_data = get_group_data(db, chat.id)
     locks = g_data.get("locks", {})
 
-    # Quick bypass if no lock is active in this group
     if not any(locks.values()):
         return
 
     is_edited = update.edited_message is not None
     should_delete = False
 
-    # 1. Edit locks
     if is_edited:
         has_media = bool(msg.photo or msg.video or msg.animation or msg.audio or msg.voice or msg.document or msg.sticker)
         if has_media and locks.get("edit_media", False):
@@ -1100,7 +1042,6 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif not has_media and locks.get("edit_msg", False):
             should_delete = True
 
-    # 2. Media locks
     if not should_delete:
         if locks.get("photo", False) and bool(msg.photo): should_delete = True
         elif locks.get("video", False) and bool(msg.video): should_delete = True
@@ -1113,57 +1054,46 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif locks.get("contact", False) and bool(msg.contact): should_delete = True
         elif locks.get("poll", False) and bool(msg.poll): should_delete = True
 
-    # 3. Forward lock
     if not should_delete and locks.get("forward", False):
         if bool(msg.forward_origin or msg.forward_date or msg.forward_from or msg.forward_from_chat):
             should_delete = True
 
-    # 4. Content & Entity-based locks
     if not should_delete:
         text_content = msg.text or msg.caption or ""
         entities = list(msg.entities or []) + list(msg.caption_entities or [])
 
-        # Link lock
         if locks.get("link", False):
             if any(e.type in [MessageEntityType.URL, MessageEntityType.TEXT_LINK] for e in entities) or URL_REGEX.search(text_content):
                 should_delete = True
 
-        # Mention lock
         if not should_delete and locks.get("mention", False):
             if any(e.type in [MessageEntityType.MENTION, MessageEntityType.TEXT_MENTION] for e in entities):
                 should_delete = True
 
-        # Tag lock
         if not should_delete and locks.get("tag", False):
             if "@" in text_content or any(e.type == MessageEntityType.MENTION for e in entities):
                 should_delete = True
 
-        # Username lock
         if not should_delete and locks.get("username", False):
             if any(e.type == MessageEntityType.MENTION for e in entities) or ("@" in text_content and not text_content.startswith("/")):
                 should_delete = True
 
-        # Hashtag lock
         if not should_delete and locks.get("hashtag", False):
             if any(e.type == MessageEntityType.HASHTAG for e in entities) or "#" in text_content:
                 should_delete = True
 
-        # Spoiler lock
         if not should_delete and locks.get("spoiler", False):
             if any(e.type == MessageEntityType.SPOILER for e in entities):
                 should_delete = True
 
-        # Emoji lock
         if not should_delete and locks.get("emoji", False):
             if any(e.type == MessageEntityType.CUSTOM_EMOJI for e in entities) or EMOJI_REGEX.search(text_content):
                 should_delete = True
 
-        # English text lock
         if not should_delete and locks.get("english", False):
             if ENGLISH_CHAR_REGEX.search(text_content):
                 should_delete = True
 
-        # Persian text lock
         if not should_delete and locks.get("persian", False):
             if PERSIAN_CHAR_REGEX.search(text_content):
                 should_delete = True
@@ -1245,32 +1175,30 @@ async def render_group_admin_panel_message(query, chat_id: int):
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 # ==========================================
-# PER-GROUP LOCKS PANEL RENDERING
+# PER-GROUP LOCKS PANEL RENDERING (CUSTOMIZED)
 # ==========================================
 async def render_group_locks_panel(query, chat_id: int, page: int = 1):
     db = load_db()
     g_data = get_group_data(db, chat_id)
     locks = g_data.get("locks", {})
-    title = html.escape(g_data.get("title") or "گروه")
 
     text = (
-        f"🔒 <b>مدیریت قفل‌های اختصاصی گروه: {title}</b>\n"
-        f"📄 <b>صفحه {page} از ۲</b>\n\n"
-        "برای تغییر وضعیت روی دکمه قفل مورد نظر کلیک کنید:"
+        f'به بخش قفل گروه خود خوش آمدید! <tg-emoji emoji-id="{CANDY_CUSTOM_EMOJI_ID}">🍭</tg-emoji>\n'
+        'چه عملیاتی انجام می‌دهید؟'
     )
 
     page_locks = [k for k, v in ALL_LOCKS.items() if v["page"] == page]
     buttons = []
     
-    # 2 columns per row
     for i in range(0, len(page_locks), 2):
         row = []
         k1 = page_locks[i]
         is_on1 = locks.get(k1, False)
-        lbl1 = f"{ALL_LOCKS[k1]['name']} {'✅' if is_on1 else ''}".strip()
+        name1 = ALL_LOCKS[k1]['name']
         btn1 = InlineKeyboardButton(
-            lbl1,
+            name1,
             callback_data=f"tgl_lock:{chat_id}:{k1}:{page}",
+            style="success" if is_on1 else "primary",
             icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on1 else None
         )
         row.append(btn1)
@@ -1278,23 +1206,22 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
         if i + 1 < len(page_locks):
             k2 = page_locks[i + 1]
             is_on2 = locks.get(k2, False)
-            lbl2 = f"{ALL_LOCKS[k2]['name']} {'✅' if is_on2 else ''}".strip()
+            name2 = ALL_LOCKS[k2]['name']
             btn2 = InlineKeyboardButton(
-                lbl2,
+                name2,
                 callback_data=f"tgl_lock:{chat_id}:{k2}:{page}",
+                style="success" if is_on2 else "primary",
                 icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on2 else None
             )
             row.append(btn2)
         buttons.append(row)
 
-    nav_row = []
-    if page == 1:
-        nav_row.append(InlineKeyboardButton("صفحه بعد ▶️", callback_data=f"panel_group_locks:{chat_id}:2", style="primary"))
-    else:
-        nav_row.append(InlineKeyboardButton("◀️ صفحه قبل", callback_data=f"panel_group_locks:{chat_id}:1", style="primary"))
-    
+    nav_row = [
+        InlineKeyboardButton("◀ صفحه قبل", callback_data=f"panel_group_locks:{chat_id}:1", style="danger"),
+        InlineKeyboardButton("صفحه بعد ▶", callback_data=f"panel_group_locks:{chat_id}:2", style="danger")
+    ]
     buttons.append(nav_row)
-    buttons.append([InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data=f"panel_group_main:{chat_id}", style="primary")])
+    buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger")])
 
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -1572,9 +1499,6 @@ def build_xo_keyboard(game_id: str, board: list, is_finished: bool = False) -> I
         buttons.append([InlineKeyboardButton("تسلیم", callback_data=f"xo_surrender:{game_id}", style="danger", icon_custom_emoji_id="5839270298205035832")])
     return InlineKeyboardMarkup(buttons)
 
-# ==========================================
-# DWOZ / TIC-TAC-TOE LOGIC
-# ==========================================
 async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -1608,9 +1532,7 @@ async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("شرکت", callback_data=f"xo_join:{game_id}", style="success", icon_custom_emoji_id="5889002570633977838")],
             [InlineKeyboardButton("بیخیال", callback_data=f"xo_cancel:{game_id}", style="danger", icon_custom_emoji_id="5848202125078699135")]
         ])
-        
         await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
-
     except Exception:
         logger.exception("Error in start_dwoz_game:")
 
@@ -1623,7 +1545,6 @@ async def dwoz_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     clean = re.sub(r"[؟?\.,!؛\-_]", "", clean).strip()
 
     valid_triggers = ["دوز", "گودی دوز", "گودی دوز بزار", "گودی دوز بذار", "بازی دوز"]
-
     if clean in valid_triggers or raw_text in valid_triggers:
         await start_dwoz_game(update, context)
         raise ApplicationHandlerStop()
@@ -1637,7 +1558,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = query.from_user.id
     current_chat_id = query.message.chat.id if query.message else 0
     db = load_db()
-
     session_k = get_session_key(user_id, current_chat_id)
 
     if data.startswith("help_"):
@@ -1676,8 +1596,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         mark_db_dirty()
         save_db(force=True)
 
-        alert_msg = f"قفل {lock_fa_name} با موفقیت {status_word} شد! ✅"
-        await query.answer(alert_msg, show_alert=True)
+        alert_msg = f"قفل {lock_fa_name} با موفقیت {status_word} شد!"
+        await query.answer(alert_msg, show_alert=False)
         await render_group_locks_panel(query, cid, page)
         return
 
@@ -1736,7 +1656,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text("لطفاً آیدی عددی کاربری که می‌خواهید انبن شود را ارسال کنید:", reply_markup=kb)
         return
 
-    # GROUP BAN & UNBAN WITH BUTTON LISTS
     elif data.startswith("ban_group_list_"):
         if int(user_id) != int(OWNER_ID):
             await query.answer("❌ فقط مالک کل.", show_alert=True)
@@ -1787,7 +1706,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await render_unban_group_picker(query, 1, db)
         return
 
-    # OWNER GLOBAL FUN RESPONSES
     elif data == "owner_fun_named":
         if int(user_id) != int(OWNER_ID):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
@@ -1846,7 +1764,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await edit_owner_panel_message(query)
         return
 
-    # OWNER GROUP INFO PANEL
     elif data.startswith("panel_owner_groups_"):
         if int(user_id) != int(OWNER_ID):
             await query.answer("❌ دسترسی غیرمجاز! فقط مالک کل.", show_alert=True)
@@ -1883,7 +1800,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if invite_link:
             await query.message.reply_text(f"🔗 <b>لینک گروه:</b>\n{invite_link}", parse_mode=ParseMode.HTML)
         else:
-            await query.message.reply_text("❌ مأموریت انجام نشد. (ربات دسترسی ساخت لینک در گروه را ندارد یا ذخیره نشده است)")
+            await query.message.reply_text("❌ ربات دسترسی ساخت لینک در گروه را ندارد یا ذخیره نشده است.")
         await query.answer()
         return
 
@@ -1977,7 +1894,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text("🔎 <b>کلمه یا عبارت موردنظر برای جستجو در لاگ‌های این گروه را ارسال کنید:</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
-    # BROADCAST
     elif data == "panel_bcast_type_select":
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
@@ -2161,7 +2077,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
-    # USER BROADCAST
     elif data == "panel_user_broadcast":
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
@@ -2187,7 +2102,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text("<b>✉️ پیام مورد نظر برای ارسال به تمام کاربران خصوصی ربات را بفرستید:</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
-    # COMMENT PANEL
     elif data.startswith("panel_comment:"):
         cid = int(data.replace("panel_comment:", ""))
         if not await is_admin_or_owner(context, cid, user_id):
@@ -2235,7 +2149,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await render_comment_panel_message(query, cid, db)
         return
 
-    # WELCOME PANEL
     elif data.startswith("panel_welcome:"):
         cid = int(data.replace("panel_welcome:", ""))
         if not await is_admin_or_owner(context, cid, user_id):
@@ -2300,7 +2213,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await render_welcome_panel_message(query, cid, db)
         return
 
-    # FOODS & POEMS
     elif data.startswith("panel_foods:"):
         cid = int(data.replace("panel_foods:", ""))
         if not await is_admin_or_owner(context, cid, user_id):
@@ -2637,7 +2549,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             del reports[rep_id]
             mark_db_dirty()
             save_db()
-            txt = '<b><tg-emoji emoji-id="5830144944399981619">✅</tg-emoji> گزارش شما توسط مدیران بررسی شد.</b>'
+            txt = f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji> گزارش شما توسط مدیران بررسی شد.</b>'
             await query.message.edit_text(txt, parse_mode=ParseMode.HTML)
             return
 
@@ -2874,12 +2786,6 @@ async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not update.message:
         return
     user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-
-    if update.effective_chat.type in ["group", "supergroup"]:
-        if await is_admin_or_owner(context, chat_id, user_id):
-            await command_admin_panel(update, context)
-            return
 
     if int(user_id) != int(OWNER_ID):
         await update.message.reply_text("❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!")
@@ -2986,6 +2892,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         u_str = str(user_id)
         chat_id = update.effective_chat.id
+        chat = update.effective_chat
         session_k = get_session_key(user_id, chat_id)
         raw_text = update.message.text or update.message.caption or ""
         clean_raw = raw_text.strip().lower()
@@ -2994,10 +2901,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --------------------------------------
         # TEXT LOCK CONTROL COMMANDS (ADMIN ONLY)
         # --------------------------------------
-        if update.effective_chat.type in ["group", "supergroup"] and await is_admin_or_owner(context, chat_id, user_id):
+        if chat and chat.type in ["group", "supergroup"] and await is_admin_or_owner(context, chat_id, user_id):
             clean_cmd = re.sub(r"[!/؟?؛\-_]", "", clean_raw).strip()
             
-            # Pattern: "قفل X" or "حذف قفل X" / "بازکردن قفل X"
             lock_action = None
             target_lock_name = None
 
@@ -3024,8 +2930,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     action_word = "فعال" if lock_action else "غیرفعال"
                     log_admin_action(db, user_id, update.effective_user.full_name, chat.title, chat_id, f"دستور متنی قفل {fa_name}", f"وضعیت: {action_word}")
 
-                    reply_text = f"قفل {fa_name} با موفقیت {action_word} شد! ✅"
-                    await update.message.reply_text(reply_text)
+                    reply_text = f'قفل {fa_name} با موفقیت {action_word} شد! <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
+                    await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML)
                     return
 
         # --------------------------------------
@@ -3038,7 +2944,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 flow = ban_flows[session_k]
                 step = flow.get("step")
 
-                # USER BAN: ID
                 if step == "ban_user_id":
                     target_uid_str = fa_to_en_digits(raw_text.strip())
                     if not target_uid_str.isdigit():
@@ -3061,7 +2966,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("دلیل بن را ارسال کنید:", reply_markup=kb)
                     return
 
-                # USER BAN: REASON
                 elif step == "ban_user_reason":
                     flow["reason"] = raw_text.strip()
                     flow["step"] = "ban_user_duration"
@@ -3077,7 +2981,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     return
 
-                # USER BAN: DURATION & EXECUTE
                 elif step == "ban_user_duration":
                     target_uid = flow["target_uid"]
                     reason = flow["reason"]
@@ -3130,7 +3033,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     return
 
-                # USER UNBAN: EXECUTE
                 elif step == "unban_user_id":
                     target_uid_str = fa_to_en_digits(raw_text.strip())
                     clear_user_all_states(db, user_id, chat_id)
@@ -3146,7 +3048,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.message.reply_text(f"✅ بن کاربر <code>{target_uid_str}</code> با موفقیت برداشته شد.", parse_mode=ParseMode.HTML)
                     return
 
-                # GROUP BAN: REASON
                 elif step == "ban_group_reason":
                     flow["reason"] = raw_text.strip()
                     flow["step"] = "ban_group_duration"
@@ -3162,7 +3063,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     return
 
-                # GROUP BAN: DURATION & EXECUTE
                 elif step == "ban_group_duration":
                     target_cid = flow["target_cid"]
                     reason = flow["reason"]
@@ -3202,7 +3102,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f"🚨 <b>گروه <code>{target_cid}</code> با موفقیت بن شد.</b>\nمدت: <b>{dur_display}</b>", parse_mode=ParseMode.HTML)
                     return
 
-            # OWNER GLOBAL FUN RESPONSES ADD
             if u_str in db["states"].get("waiting_fun_named_msg", {}):
                 payload = extract_media_payload(update.message)
                 if payload:
@@ -3223,7 +3122,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f"✅ پاسخ فحش عادی ذخیره شد (کل: {len(db['global_fun_normal'])}).", reply_markup=kb, parse_mode=ParseMode.HTML)
                     return
 
-            # SHUTDOWN MESSAGE
             if u_str in db["states"].get("waiting_shutdown_msg", {}):
                 del db["states"]["waiting_shutdown_msg"][u_str]
                 db["bot_shutdown"] = True
@@ -3238,7 +3136,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("🔴 <b>ربات با موفقیت خاموش شد و پیام خاموشی ذخیره گردید.</b>", parse_mode=ParseMode.HTML)
                 return
 
-            # COOLDOWN SETTING
             if u_str in db["states"].get("waiting_cooldown", {}):
                 del db["states"]["waiting_cooldown"][u_str]
                 try:
@@ -3251,7 +3148,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("❌ مقدار وارد شده نامعتبر است.")
                 return
 
-            # GROUP SEARCH QUERY
             if u_str in db["states"].get("waiting_search_query", {}):
                 target_cid = db["states"]["waiting_search_query"][u_str]
                 del db["states"]["waiting_search_query"][u_str]
@@ -3293,7 +3189,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_document(document=file_bytes, caption=f"🔎 نتایج جستجوی <code>{query_word}</code> در تاریخچه ثبت‌شده گروه", parse_mode=ParseMode.HTML)
                 return
 
-            # BROADCAST BUILDER
             if u_str in db["states"].get("broadcast_builder", {}):
                 builder = db["states"]["broadcast_builder"][u_str]
                 mode = builder.get("mode")
@@ -3354,7 +3249,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("📊 <b>پیش‌نمایش نظرسنجی بالا را مشاهده می‌کنید. تأیید برای ارسال همگانی؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
                     return
 
-            # USER BROADCAST
             if u_str in db["states"].get("waiting_user_broadcast_msg", {}):
                 del db["states"]["waiting_user_broadcast_msg"][u_str]
                 payload = extract_media_payload(update.message)
@@ -3377,7 +3271,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         # --------------------------------------
-        # HANDLER CLEANUP / پاکسازی سریع پیام‌ها
+        # HANDLER CLEANUP
         # --------------------------------------
         match_cleanup = CLEANUP_PATTERN.match(raw_text)
         if match_cleanup:
@@ -3515,7 +3409,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await command_admin_panel(update, context)
             return
 
-        # Welcome and Comment Media Set States
         if u_str in db["states"].get("waiting_welcome_msg", {}):
             target_cid = db["states"]["waiting_welcome_msg"][u_str]
             if await is_admin_or_owner(context, target_cid, user_id):
@@ -3542,7 +3435,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("✅ <b>کامنت اتوماتیک اختصاصی این گروه با مدیا ذخیره شد!</b>", parse_mode=ParseMode.HTML)
                     return
 
-        # Foods and Poems state
         if u_str in db["states"].get("waiting_add_food", {}):
             target_cid = db["states"]["waiting_add_food"][u_str]
             del db["states"]["waiting_add_food"][u_str]
@@ -4048,7 +3940,7 @@ def main():
     app.add_handler(MessageHandler(filters.ALL, global_security_guard), group=-10)
     app.add_handler(CallbackQueryHandler(global_security_guard), group=-10)
 
-    # 1. Group Lock Enforcer for Regular Messages & Edited Messages (Group -5)
+    # 1. Group Lock Enforcer (Group -5)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, enforce_group_locks), group=-5)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.UpdateType.EDITED_MESSAGE, enforce_group_locks), group=-5)
 
