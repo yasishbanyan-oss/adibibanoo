@@ -4398,7 +4398,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
         # غذا با ایموجی‌های پریمیوم و متن عکس بالا
-        elif is_group and ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
+        elif is_group and any(w in norm_text.split() for w in ["غذا", "غدا", "نهار", "شام"]) and features.get("food", True):
             g_data = get_group_data(db, chat_id)
             fl = g_data.get("foods", DEFAULT_FOODS)
             if fl:
@@ -4408,6 +4408,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f'<b><tg-emoji emoji-id="5357066069250948384">🐱</tg-emoji> | {html.escape(selected_food)}</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                return
 
         # شعر
         elif is_group and norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
