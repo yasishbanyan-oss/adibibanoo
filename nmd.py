@@ -4601,11 +4601,11 @@ def main():
     app.add_handler(ChatMemberHandler(handle_chat_member_welcome, ChatMemberHandler.CHAT_MEMBER), group=-2)
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
 
-    # Inline Whisper Handler
-    app.add_handler(InlineQueryHandler(handle_inline_whisper))
-
     # Chat Member Tracking for bot itself
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
+
+    # Inline Query Handler for Whisper (MUST be before general handlers)
+    app.add_handler(InlineQueryHandler(handle_inline_whisper))
 
     # General callback & command handlers
     app.add_handler(CallbackQueryHandler(handle_callback_query))
