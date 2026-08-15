@@ -17,6 +17,8 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
     ReactionTypeEmoji,
 )
 from telegram.constants import ParseMode, ChatMemberStatus, PollType, MessageEntityType
@@ -26,6 +28,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ChatMemberHandler,
+    InlineQueryHandler,
     ContextTypes,
     ApplicationHandlerStop,
     filters,
@@ -1882,6 +1885,86 @@ async def dwoz_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         raise ApplicationHandlerStop()
 
 # ==========================================
+# WHISPER (INLINE NAJVA) SYSTEM
+# ==========================================
+WHISPER_PATTERN = re.compile(r"^(.*?)\s+(@[a-zA-Z0-9_]{4,}|(?:\d{5,}))\s*$", re.DOTALL)
+
+async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query.strip()
+    user_id = update.inline_query.from_user.id
+    results = []
+
+    match = WHISPER_PATTERN.match(query)
+    
+    if not match:
+        # ۱. نتیجه راهنما زمانی که هنوز چیزی تایپ نشده یا تارگت وارد نشده
+        help_text = (
+            '<b><tg-emoji emoji-id="6084584811379299518">🔗</tg-emoji> آموزش نجوا در ربات گودی!</b>\n\n'
+            '<b>پیام خود را جلوی یوزرنیم ربات نوشته و در انتهای پیام خود یوزرنیم یا آیدی عددی فرد دریافت کننده را وارد کنید.</b>'
+        )
+        results.append(
+            InlineQueryResultArticle(
+                id="whisper_help",
+                title="🔗 آموزش نجوا در ربات گودی!",
+                description="پیام خود را بنویسید و در انتها @username یا آیدی عددی را بگذارید.",
+                input_message_content=InputTextMessageContent(help_text, parse_mode=ParseMode.HTML),
+                thumb_url="https://telegra.ph/file/206f477eef1108ef91866.png"
+            )
+        )
+    else:
+        secret_text = match.group(1).strip()
+        target_raw = match.group(2).strip()
+
+        # ذخیره نجوا در دیتابیس
+        db = load_db()
+        if "whispers" not in db:
+            db["whispers"] = {}
+
+        w_id = f"w_{datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1000, 9999)}"
+        
+        target_username = target_raw.replace("@", "") if target_raw.startswith("@") else None
+        target_uid = int(target_raw) if target_raw.isdigit() else None
+
+        db["whispers"][w_id] = {
+            "sender_id": user_id,
+            "sender_name": update.inline_query.from_user.full_name,
+            "target_raw": target_raw,
+            "target_username": target_username.lower() if target_username else None,
+            "target_uid": target_uid,
+            "text": secret_text,
+            "read": False,
+            "reader_name": None,
+            "created_at": datetime.now().timestamp()
+        }
+        mark_db_dirty()
+        save_db(force=True)
+
+        # ۲. دکمه ارسال پیام نجوا به کاربر
+        bot_info = await context.bot.get_me()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎟 مشاهده نجوا", callback_data=f"wh_read:{w_id}", style="success", icon_custom_emoji_id="5902293707708701317")],
+            [
+                InlineKeyboardButton("⚠️ حذف نجوا", callback_data=f"wh_del:{w_id}", style="danger", icon_custom_emoji_id="6086969407286808660"),
+                InlineKeyboardButton("🏦 ارسال نجوا", switch_inline_query_current_chat="", style="primary", icon_custom_emoji_id="5832240029446971049")
+            ]
+        ])
+
+        msg_content = f'<b><tg-emoji emoji-id="5418343338325582149">💬</tg-emoji> یک نجوا برای کاربر {target_raw} ارسال شد.</b>'
+
+        results.append(
+            InlineQueryResultArticle(
+                id=w_id,
+                title=f"🪪 ارسال پیام نجوا به {target_raw}",
+                description=f"قفل شده برای: {target_raw}",
+                input_message_content=InputTextMessageContent(msg_content, parse_mode=ParseMode.HTML),
+                reply_markup=kb,
+                thumb_url="https://telegra.ph/file/206f477eef1108ef91866.png"
+            )
+        )
+
+    await update.inline_query.answer(results, cache_time=1, is_personal=True)
+
+# ==========================================
 # CALLBACK QUERY HANDLER
 # ==========================================
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1914,6 +1997,85 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
         await render_telegram_service_locks_panel(query, cid)
         return
+
+     # WHISPER (NAJVA) CALLBACKS
+    elif data.startswith("wh_read:"):
+        w_id = data.replace("wh_read:", "")
+        whispers = db.get("whispers", {})
+        
+        if w_id not in whispers:
+            await query.answer("❌ این نجوا منقضی یا حذف شده است!", show_alert=True)
+            return
+
+        w_data = whispers[w_id]
+        sender_id = w_data["sender_id"]
+        target_uid = w_data.get("target_uid")
+        target_uname = w_data.get("target_username")
+
+        u_uname = (query.from_user.username or "").lower()
+        u_id = query.from_user.id
+
+        is_sender = (u_id == sender_id)
+        is_target = (target_uid and u_id == target_uid) or (target_uname and u_uname == target_uname)
+
+        # اگر فرد دیگری کلیک کرد
+        if not is_sender and not is_target:
+            await query.answer("😐 فضولی نکن! این نجوا برای شما نیست.", show_alert=True)
+            return
+
+        # نمایش متن مخفی نجوا در آلرت پاپ‌آپ
+        await query.answer(f"🔒 متن نجوا:\n\n{w_data['text']}", show_alert=True)
+
+        # اگر برای اولین بار توسط دریافت‌کننده خوانده شد، پیام اصلی ادیت شود
+        if is_target and not w_data.get("read", False):
+            w_data["read"] = True
+            w_data["reader_name"] = query.from_user.full_name
+            db["whispers"][w_id] = w_data
+            mark_db_dirty()
+            save_db(force=True)
+
+            r_mention = get_user_mention(u_id, query.from_user.full_name)
+            edited_text = f'<b><tg-emoji emoji-id="5830245188936670873">🌟</tg-emoji> نجوا با موفقیت توسط کاربر {r_mention} خوانده شد.</b>'
+
+            new_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("👀 خواندن مجدد", callback_data=f"wh_read:{w_id}", style="primary", icon_custom_emoji_id="5843493805835165294")],
+                [
+                    InlineKeyboardButton("⚠️ حذف نجوا", callback_data=f"wh_del:{w_id}", style="danger", icon_custom_emoji_id="6086969407286808660"),
+                    InlineKeyboardButton("🤝 پاسخ به نجوا", switch_inline_query_current_chat=f"@{query.from_user.username} " if query.from_user.username else "", style="success", icon_custom_emoji_id="6294041016261414265")
+                ]
+            ])
+
+            try:
+                await query.edit_message_text(edited_text, reply_markup=new_kb, parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+        return
+
+    elif data.startswith("wh_del:"):
+        w_id = data.replace("wh_del:", "")
+        whispers = db.get("whispers", {})
+
+        if w_id not in whispers:
+            await query.answer("❌ این نجوا قبلاً حذف شده است!", show_alert=True)
+            return
+
+        w_data = whispers[w_id]
+        if query.from_user.id != w_data["sender_id"]:
+            await query.answer("⛔️ فقط فرستنده می‌تواند پیام را حذف کند!", show_alert=True)
+            return
+
+        del whispers[w_id]
+        mark_db_dirty()
+        save_db(force=True)
+
+        await query.answer("❗️ نجوای شما با موفقیت حذف شد.", show_alert=True)
+
+        try:
+            del_text = '<b><tg-emoji emoji-id="5818716826699307883">❗️</tg-emoji> این نجوا توسط فرستنده حذف گردید.</b>'
+            await query.edit_message_text(del_text, reply_markup=None, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+        return   
 
     elif data.startswith("tgl_srv_lock:"):
         parts = data.split(":")
@@ -4499,6 +4661,9 @@ def main():
     # 4. Welcome system (ChatMember event + Service Message fallback)
     app.add_handler(ChatMemberHandler(handle_chat_member_welcome, ChatMemberHandler.CHAT_MEMBER), group=-2)
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
+
+    # Inline Whisper Handler
+    app.add_handler(InlineQueryHandler(handle_inline_whisper))
 
     # Chat Member Tracking for bot itself
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
