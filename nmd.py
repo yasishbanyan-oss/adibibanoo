@@ -46,6 +46,7 @@ FIXED_REACTION = "❤️"
 
 # Custom Emojis
 CHECK_CUSTOM_EMOJI_ID = "5830144944399981619"
+CROSS_CUSTOM_EMOJI_ID = "5819154526816444042"
 CANDY_CUSTOM_EMOJI_ID = "6046300980436278776"
 PARTY_CUSTOM_EMOJI_ID = "5818785846823755322"
 
@@ -104,7 +105,7 @@ LOCK_COMMAND_PATTERN = re.compile(
 
 # Text Welcome Toggle Pattern (Admin Only)
 WELCOME_CMD_PATTERN = re.compile(
-    r"^(?:[/!])?(?:گودی\s+)?(خوش\s*آمد|خوشآمد|خوش\s*امد|خوشامدگویی|خوش\s*آمدگویی|welcome)\s*(روشن|خاموش|on|off)$",
+    r"^(?:[/!])?(?:گودی\s+)?(خوش\s*آمد|خوشآمد|خوش\s*امد|خوشآمدگویی|خوش\s*آمدگویی|welcome)\s*(روشن|خاموش|on|off)$",
     re.IGNORECASE
 )
 
@@ -148,7 +149,20 @@ ALL_LOCKS = {
     "persian": {"name": "فارسی", "page": 2},
     "hashtag": {"name": "هشتگ", "page": 2},
     "username": {"name": "یوزرنیم", "page": 2},
+    "telegram_services": {"name": "سرویس تلگرام", "page": 2, "is_category": True},
+    # 4 Telegram Service Locks (Disabled by default)
+    "service_join_link": {"name": "حذف پیام ورود با لینک", "page": 0, "is_service": True},
+    "service_add_member": {"name": "حذف پیام افزودن عضو", "page": 0, "is_service": True},
+    "service_pinned": {"name": "حذف پیام سنجاق شدن", "page": 0, "is_service": True},
+    "service_video_chat": {"name": "حذف پیام‌های ویدیو چت", "page": 0, "is_service": True},
 }
+
+TELEGRAM_SERVICE_LOCK_KEYS = [
+    "service_join_link",
+    "service_add_member",
+    "service_pinned",
+    "service_video_chat"
+]
 
 LOCK_TEXT_ALIASES = {
     "منشن": "mention", "منشنها": "mention",
@@ -172,7 +186,38 @@ LOCK_TEXT_ALIASES = {
     "انگلیسی": "english", "لاتین": "english",
     "فارسی": "persian", "پارسی": "persian",
     "هشتگ": "hashtag", "تگ هشتگ": "hashtag",
-    "یوزرنیم": "username", "ایدی": "username", "آیدی": "username"
+    "یوزرنیم": "username", "ایدی": "username", "آیدی": "username",
+    # Service Lock Text Aliases
+    "پیام ورود با لینک": "service_join_link",
+    "پیامِ ورود با لینک": "service_join_link",
+    "پیام ورود لینک": "service_join_link",
+    "پیام ورود": "service_join_link",
+    "پیامِ ورود": "service_join_link",
+    "ورود با لینک": "service_join_link",
+    "حذف پیام ورود با لینک": "service_join_link",
+    "پیام افزودن عضو": "service_add_member",
+    "پیامِ افزودن عضو": "service_add_member",
+    "پیام افزودن کاربر": "service_add_member",
+    "افزودن عضو": "service_add_member",
+    "اضافه کردن عضو": "service_add_member",
+    "حذف پیام افزودن عضو": "service_add_member",
+    "پیام سنجاق شدن": "service_pinned",
+    "پیامِ سنجاق شدن": "service_pinned",
+    "پیام سنجاق": "service_pinned",
+    "پیام پین": "service_pinned",
+    "پیامِ پین": "service_pinned",
+    "پیام پین شدن": "service_pinned",
+    "حذف پیام سنجاق شدن": "service_pinned",
+    "پیام‌های ویدیو چت": "service_video_chat",
+    "پیامهای ویدیو چت": "service_video_chat",
+    "پیام های ویدیو چت": "service_video_chat",
+    "پیام ویدیو چت": "service_video_chat",
+    "پیامِ ویدیو چت": "service_video_chat",
+    "ویدیو چت": "service_video_chat",
+    "ویس چت": "service_video_chat",
+    "پیام ویس چت": "service_video_chat",
+    "پیام‌های ویس چت": "service_video_chat",
+    "حذف پیام‌های ویدیو چت": "service_video_chat"
 }
 
 def fa_to_en_digits(text: str) -> str:
@@ -230,7 +275,8 @@ DEFAULT_POEMS = [
 ]
 
 def get_default_locks_structure() -> dict:
-    return {k: False for k in ALL_LOCKS.keys()}
+    locks = {k: False for k in ALL_LOCKS.keys() if not ALL_LOCKS[k].get("is_category")}
+    return locks
 
 def get_default_group_structure() -> dict:
     return {
@@ -335,7 +381,7 @@ def migrate_db_if_needed(data: dict) -> dict:
             g_val["locks"] = get_default_locks_structure()
         else:
             for lk in ALL_LOCKS.keys():
-                if lk not in g_val["locks"]:
+                if not ALL_LOCKS[lk].get("is_category") and lk not in g_val["locks"]:
                     g_val["locks"][lk] = False
 
     new_db["version"] = 5
@@ -427,6 +473,11 @@ def get_group_data(db: dict, chat_id: int | str) -> dict:
         if "locks" not in groups[cid_str] or not isinstance(groups[cid_str]["locks"], dict):
             groups[cid_str]["locks"] = get_default_locks_structure()
             mark_db_dirty()
+        else:
+            for lk in ALL_LOCKS.keys():
+                if not ALL_LOCKS[lk].get("is_category") and lk not in groups[cid_str]["locks"]:
+                    groups[cid_str]["locks"][lk] = False
+                    mark_db_dirty()
     return groups[cid_str]
 
 # ==========================================
@@ -770,15 +821,11 @@ def set_cooldown_data(db: dict, chat_id: int, feature: str, data: dict):
 # WELCOME SYSTEM & DUPLICATE PROTECTION
 # ==========================================
 def check_and_set_welcome_duplicate(db: dict, chat_id: int, user_id: int) -> bool:
-    """
-    Returns True if welcome was already sent recently (within 45s), else False and records.
-    """
     g_data = get_group_data(db, chat_id)
     history = g_data.setdefault("recent_welcomed_users", {})
     now_ts = datetime.now().timestamp()
     uid_str = str(user_id)
 
-    # Clean old records > 120 seconds
     for k in list(history.keys()):
         if now_ts - history[k] > 120:
             del history[k]
@@ -869,7 +916,6 @@ async def handle_chat_member_welcome(update: Update, context: ContextTypes.DEFAU
     old_status = result.old_chat_member.status
     new_status = result.new_chat_member.status
 
-    # True join detection: user was left/banned/not present and became member/restricted
     was_member = old_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
     is_now_member = new_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED]
 
@@ -937,7 +983,8 @@ async def handle_welcome_text_command(update: Update, context: ContextTypes.DEFA
         )
     else:
         reply_html = (
-            '<b>خوش‌آمدگویی گروه با موفقیت غیرفعال شد!</b> ❌'
+            f'<b>خوش‌آمدگویی گروه با موفقیت غیرفعال شد!</b> '
+            f'<tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji>'
         )
 
     try:
@@ -1167,10 +1214,7 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.effective_user
     msg = update.message or update.edited_message
 
-    if not chat or chat.type not in ["group", "supergroup"] or not user or not msg:
-        return
-
-    if user.is_bot or await is_admin_or_owner(context, chat.id, user.id):
+    if not chat or chat.type not in ["group", "supergroup"] or not msg:
         return
 
     db = load_db()
@@ -1180,71 +1224,118 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not any(locks.values()):
         return
 
-    is_edited = update.edited_message is not None
     should_delete = False
 
-    if is_edited:
-        has_media = bool(msg.photo or msg.video or msg.animation or msg.audio or msg.voice or msg.document or msg.sticker)
-        if has_media and locks.get("edit_media", False):
+    # ------------------------------------------
+    # TELEGRAM SERVICE MESSAGES LOCKS
+    # ------------------------------------------
+    # 1. Join via Link vs Add Member
+    if msg.new_chat_members:
+        # If user joined via invite link: msg.from_user is either member themselves or None
+        is_join_by_link = False
+        is_added_by_other = False
+
+        if len(msg.new_chat_members) == 1 and user and msg.new_chat_members[0].id == user.id:
+            is_join_by_link = True
+        elif user and any(m.id != user.id for m in msg.new_chat_members):
+            is_added_by_other = True
+        else:
+            is_join_by_link = True
+
+        if is_join_by_link and locks.get("service_join_link", False):
             should_delete = True
-        elif not has_media and locks.get("edit_msg", False):
+        elif is_added_by_other and locks.get("service_add_member", False):
             should_delete = True
 
+    # 2. Pinned Service Message
+    if not should_delete and locks.get("service_pinned", False) and bool(getattr(msg, "pinned_message", None)):
+        should_delete = True
+
+    # 3. Video Chat / Voice Chat Service Messages
+    if not should_delete and locks.get("service_video_chat", False):
+        has_vc_event = bool(
+            getattr(msg, "video_chat_started", None) or
+            getattr(msg, "video_chat_ended", None) or
+            getattr(msg, "video_chat_participants_invited", None) or
+            getattr(msg, "video_chat_scheduled", None) or
+            getattr(msg, "voice_chat_started", None) or
+            getattr(msg, "voice_chat_ended", None) or
+            getattr(msg, "voice_chat_participants_invited", None)
+        )
+        if has_vc_event:
+            should_delete = True
+
+    # ------------------------------------------
+    # STANDARD CONTENT LOCKS (Non-Admin only)
+    # ------------------------------------------
     if not should_delete:
-        if locks.get("photo", False) and bool(msg.photo): should_delete = True
-        elif locks.get("video", False) and bool(msg.video): should_delete = True
-        elif locks.get("gif", False) and bool(msg.animation): should_delete = True
-        elif locks.get("audio", False) and bool(msg.audio): should_delete = True
-        elif locks.get("voice", False) and bool(msg.voice): should_delete = True
-        elif locks.get("document", False) and bool(msg.document): should_delete = True
-        elif locks.get("sticker", False) and bool(msg.sticker): should_delete = True
-        elif locks.get("location", False) and bool(msg.location or msg.venue): should_delete = True
-        elif locks.get("contact", False) and bool(msg.contact): should_delete = True
-        elif locks.get("poll", False) and bool(msg.poll): should_delete = True
+        if user and (user.is_bot or await is_admin_or_owner(context, chat.id, user.id)):
+            return
 
-    if not should_delete and locks.get("forward", False):
-        if bool(msg.forward_origin or msg.forward_date or msg.forward_from or msg.forward_from_chat):
-            should_delete = True
+        is_edited = update.edited_message is not None
 
-    if not should_delete:
-        text_content = msg.text or msg.caption or ""
-        entities = list(msg.entities or []) + list(msg.caption_entities or [])
-
-        if locks.get("link", False):
-            if any(e.type in [MessageEntityType.URL, MessageEntityType.TEXT_LINK] for e in entities) or URL_REGEX.search(text_content):
+        if is_edited:
+            has_media = bool(msg.photo or msg.video or msg.animation or msg.audio or msg.voice or msg.document or msg.sticker)
+            if has_media and locks.get("edit_media", False):
+                should_delete = True
+            elif not has_media and locks.get("edit_msg", False):
                 should_delete = True
 
-        if not should_delete and locks.get("mention", False):
-            if any(e.type in [MessageEntityType.MENTION, MessageEntityType.TEXT_MENTION] for e in entities):
+        if not should_delete:
+            if locks.get("photo", False) and bool(msg.photo): should_delete = True
+            elif locks.get("video", False) and bool(msg.video): should_delete = True
+            elif locks.get("gif", False) and bool(msg.animation): should_delete = True
+            elif locks.get("audio", False) and bool(msg.audio): should_delete = True
+            elif locks.get("voice", False) and bool(msg.voice): should_delete = True
+            elif locks.get("document", False) and bool(msg.document): should_delete = True
+            elif locks.get("sticker", False) and bool(msg.sticker): should_delete = True
+            elif locks.get("location", False) and bool(msg.location or msg.venue): should_delete = True
+            elif locks.get("contact", False) and bool(msg.contact): should_delete = True
+            elif locks.get("poll", False) and bool(msg.poll): should_delete = True
+
+        if not should_delete and locks.get("forward", False):
+            if bool(msg.forward_origin or msg.forward_date or msg.forward_from or msg.forward_from_chat):
                 should_delete = True
 
-        if not should_delete and locks.get("tag", False):
-            if "@" in text_content or any(e.type == MessageEntityType.MENTION for e in entities):
-                should_delete = True
+        if not should_delete:
+            text_content = msg.text or msg.caption or ""
+            entities = list(msg.entities or []) + list(msg.caption_entities or [])
 
-        if not should_delete and locks.get("username", False):
-            if any(e.type == MessageEntityType.MENTION for e in entities) or ("@" in text_content and not text_content.startswith("/")):
-                should_delete = True
+            if locks.get("link", False):
+                if any(e.type in [MessageEntityType.URL, MessageEntityType.TEXT_LINK] for e in entities) or URL_REGEX.search(text_content):
+                    should_delete = True
 
-        if not should_delete and locks.get("hashtag", False):
-            if any(e.type == MessageEntityType.HASHTAG for e in entities) or "#" in text_content:
-                should_delete = True
+            if not should_delete and locks.get("mention", False):
+                if any(e.type in [MessageEntityType.MENTION, MessageEntityType.TEXT_MENTION] for e in entities):
+                    should_delete = True
 
-        if not should_delete and locks.get("spoiler", False):
-            if any(e.type == MessageEntityType.SPOILER for e in entities):
-                should_delete = True
+            if not should_delete and locks.get("tag", False):
+                if "@" in text_content or any(e.type == MessageEntityType.MENTION for e in entities):
+                    should_delete = True
 
-        if not should_delete and locks.get("emoji", False):
-            if any(e.type == MessageEntityType.CUSTOM_EMOJI for e in entities) or EMOJI_REGEX.search(text_content):
-                should_delete = True
+            if not should_delete and locks.get("username", False):
+                if any(e.type == MessageEntityType.MENTION for e in entities) or ("@" in text_content and not text_content.startswith("/")):
+                    should_delete = True
 
-        if not should_delete and locks.get("english", False):
-            if ENGLISH_CHAR_REGEX.search(text_content):
-                should_delete = True
+            if not should_delete and locks.get("hashtag", False):
+                if any(e.type == MessageEntityType.HASHTAG for e in entities) or "#" in text_content:
+                    should_delete = True
 
-        if not should_delete and locks.get("persian", False):
-            if PERSIAN_CHAR_REGEX.search(text_content):
-                should_delete = True
+            if not should_delete and locks.get("spoiler", False):
+                if any(e.type == MessageEntityType.SPOILER for e in entities):
+                    should_delete = True
+
+            if not should_delete and locks.get("emoji", False):
+                if any(e.type == MessageEntityType.CUSTOM_EMOJI for e in entities) or EMOJI_REGEX.search(text_content):
+                    should_delete = True
+
+            if not should_delete and locks.get("english", False):
+                if ENGLISH_CHAR_REGEX.search(text_content):
+                    should_delete = True
+
+            if not should_delete and locks.get("persian", False):
+                if PERSIAN_CHAR_REGEX.search(text_content):
+                    should_delete = True
 
     if should_delete:
         try:
@@ -1341,26 +1432,43 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
     for i in range(0, len(page_locks), 2):
         row = []
         k1 = page_locks[i]
-        is_on1 = locks.get(k1, False)
-        name1 = ALL_LOCKS[k1]['name']
-        btn1 = InlineKeyboardButton(
-            name1,
-            callback_data=f"tgl_lock:{chat_id}:{k1}:{page}",
-            style="success" if is_on1 else "primary",
-            icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on1 else None
-        )
+        meta1 = ALL_LOCKS[k1]
+        name1 = meta1['name']
+
+        if meta1.get("is_category"):
+            btn1 = InlineKeyboardButton(
+                name1,
+                callback_data=f"panel_service_locks:{chat_id}",
+                style="primary"
+            )
+        else:
+            is_on1 = locks.get(k1, False)
+            btn1 = InlineKeyboardButton(
+                name1,
+                callback_data=f"tgl_lock:{chat_id}:{k1}:{page}",
+                style="success" if is_on1 else "primary",
+                icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on1 else None
+            )
         row.append(btn1)
 
         if i + 1 < len(page_locks):
             k2 = page_locks[i + 1]
-            is_on2 = locks.get(k2, False)
-            name2 = ALL_LOCKS[k2]['name']
-            btn2 = InlineKeyboardButton(
-                name2,
-                callback_data=f"tgl_lock:{chat_id}:{k2}:{page}",
-                style="success" if is_on2 else "primary",
-                icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on2 else None
-            )
+            meta2 = ALL_LOCKS[k2]
+            name2 = meta2['name']
+            if meta2.get("is_category"):
+                btn2 = InlineKeyboardButton(
+                    name2,
+                    callback_data=f"panel_service_locks:{chat_id}",
+                    style="primary"
+                )
+            else:
+                is_on2 = locks.get(k2, False)
+                btn2 = InlineKeyboardButton(
+                    name2,
+                    callback_data=f"tgl_lock:{chat_id}:{k2}:{page}",
+                    style="success" if is_on2 else "primary",
+                    icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on2 else None
+                )
             row.append(btn2)
         buttons.append(row)
 
@@ -1375,6 +1483,35 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
             InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger")
         ]
     buttons.append(nav_row)
+
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+# ==========================================
+# TELEGRAM SERVICE LOCKS PANEL RENDERING
+# ==========================================
+async def render_telegram_service_locks_panel(query, chat_id: int):
+    db = load_db()
+    g_data = get_group_data(db, chat_id)
+    locks = g_data.get("locks", {})
+
+    text = (
+        f'<b>⚙️ مدیریت قفل سرویس‌های تلگرام</b> <tg-emoji emoji-id="{CANDY_CUSTOM_EMOJI_ID}">🍭</tg-emoji>\n\n'
+        'از گزینه‌های زیر برای روشن یا خاموش کردن حذف پیام‌های سرویس استفاده کنید:'
+    )
+
+    buttons = []
+    for k in TELEGRAM_SERVICE_LOCK_KEYS:
+        is_on = locks.get(k, False)
+        name = ALL_LOCKS[k]['name']
+        btn = InlineKeyboardButton(
+            name,
+            callback_data=f"tgl_srv_lock:{chat_id}:{k}",
+            style="success" if is_on else "primary",
+            icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on else None
+        )
+        buttons.append([btn])
+
+    buttons.append([InlineKeyboardButton("🔙 بازگشت به قفل‌ها", callback_data=f"panel_group_locks:{chat_id}:2", style="danger")])
 
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -1730,6 +1867,39 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
         await render_group_locks_panel(query, cid, page)
+        return
+
+    elif data.startswith("panel_service_locks:"):
+        cid = int(data.split(":")[1])
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        await render_telegram_service_locks_panel(query, cid)
+        return
+
+    elif data.startswith("tgl_srv_lock:"):
+        parts = data.split(":")
+        cid = int(parts[1])
+        lock_key = parts[2]
+
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+
+        g_data = get_group_data(db, cid)
+        locks = g_data.setdefault("locks", get_default_locks_structure())
+        locks[lock_key] = not locks.get(lock_key, False)
+        
+        status_word = "فعال" if locks[lock_key] else "غیرفعال"
+        lock_fa_name = ALL_LOCKS.get(lock_key, {}).get("name", lock_key)
+
+        log_admin_action(db, user_id, query.from_user.full_name, g_data.get("title", ""), cid, f"تغییر {lock_fa_name}", f"وضعیت جدید: {status_word}")
+        mark_db_dirty()
+        save_db(force=True)
+
+        alert_msg = f"{lock_fa_name} با موفقیت {status_word} شد!"
+        await query.answer(alert_msg, show_alert=False)
+        await render_telegram_service_locks_panel(query, cid)
         return
 
     elif data.startswith("tgl_lock:"):
@@ -3091,11 +3261,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     lock_key = LOCK_TEXT_ALIASES.get(raw_target)
                     if not lock_key:
                         for k, v in ALL_LOCKS.items():
-                            if raw_target == v["name"]:
+                            if not v.get("is_category") and raw_target == v["name"]:
                                 lock_key = k
                                 break
 
-                    if lock_key and lock_key in ALL_LOCKS:
+                    if lock_key and lock_key in ALL_LOCKS and not ALL_LOCKS[lock_key].get("is_category"):
                         g_data = get_group_data(db, chat_id)
                         locks = g_data.setdefault("locks", get_default_locks_structure())
                         locks[lock_key] = lock_action
@@ -3104,9 +3274,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         fa_name = ALL_LOCKS[lock_key]["name"]
                         action_word = "فعال" if lock_action else "غیرفعال"
-                        log_admin_action(db, user_id, update.effective_user.full_name, chat.title, chat_id, f"دستور متنی قفل {fa_name}", f"وضعیت: {action_word}")
+                        log_admin_action(db, user_id, update.effective_user.full_name, chat.title, chat_id, f"دستور متنی {fa_name}", f"وضعیت: {action_word}")
 
-                        reply_text = f'قفل {fa_name} با موفقیت {action_word} شد! <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
+                        if lock_action:
+                            reply_text = f'{fa_name} با موفقیت {action_word} شد! <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
+                        else:
+                            reply_text = f'{fa_name} با موفقیت {action_word} شد! <tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji>'
+
                         await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML)
                         return
 
