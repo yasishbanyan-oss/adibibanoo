@@ -1889,76 +1889,18 @@ async def dwoz_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 # ==========================================
 async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        query = update.inline_query.query.strip()
-        user_id = update.inline_query.from_user.id
-        results = []
-
-        match = WHISPER_PATTERN.match(query)
-        
-        if not match:
-            # متن راهنما بدون تگ پیشرفته tg-emoji برای تست
-            help_text = (
-                '<b>🔗 آموزش نجوا در ربات گودی!</b>\n\n'
-                '<b>پیام خود را جلوی یوزرنیم ربات نوشته و در انتهای پیام خود یوزرنیم یا آیدی عددی فرد دریافت کننده را وارد کنید.</b>'
-            )
-            results.append(
-                InlineQueryResultArticle(
-                    id="whisper_help",
-                    title="🔗 آموزش نجوا در ربات گودی!",
-                    description="پیام خود را بنویسید و در انتها @username یا آیدی عددی را بگذارید.",
-                    input_message_content=InputTextMessageContent(help_text, parse_mode=ParseMode.HTML),
-                    thumb_url="https://telegra.ph/file/206f477eef1108ef91866.png"
+        results = [
+            InlineQueryResultArticle(
+                id="test_whisper_help",
+                title="آموزش نجوا در ربات گودی! 🔗",
+                description="برای تست سیستم نجوا کلیک کنید.",
+                input_message_content=InputTextMessageContent(
+                    "<b>سیستم نجوا با موفقیت کار می‌کند! 🔗</b>", 
+                    parse_mode=ParseMode.HTML
                 )
             )
-        else:
-            secret_text = match.group(1).strip()
-            target_raw = match.group(2).strip()
-
-            db = load_db()
-            if "whispers" not in db:
-                db["whispers"] = {}
-
-            w_id = f"w_{datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1000, 9999)}"
-            
-            target_username = target_raw.replace("@", "") if target_raw.startswith("@") else None
-            target_uid = int(target_raw) if target_raw.isdigit() else None
-
-            db["whispers"][w_id] = {
-                "sender_id": user_id,
-                "sender_name": update.inline_query.from_user.full_name,
-                "target_raw": target_raw,
-                "target_username": target_username.lower() if target_username else None,
-                "target_uid": target_uid,
-                "text": secret_text,
-                "read": False,
-                "reader_name": None,
-                "created_at": datetime.now().timestamp()
-            }
-            mark_db_dirty()
-            save_db(force=True)
-
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎟 مشاهده نجوا", callback_data=f"wh_read:{w_id}", style="success", icon_custom_emoji_id="5902293707708701317")],
-                [
-                    InlineKeyboardButton("⚠️ حذف نجوا", callback_data=f"wh_del:{w_id}", style="danger", icon_custom_emoji_id="6086969407286808660"),
-                    InlineKeyboardButton("🏦 ارسال نجوا", switch_inline_query_current_chat="", style="primary", icon_custom_emoji_id="5832240029446971049")
-                ]
-            ])
-
-            msg_content = f'<b>💬 یک نجوا برای کاربر {target_raw} ارسال شد.</b>'
-
-            results.append(
-                InlineQueryResultArticle(
-                    id=w_id,
-                    title=f"🪪 ارسال پیام نجوا به {target_raw}",
-                    description=f"قفل شده برای: {target_raw}",
-                    input_message_content=InputTextMessageContent(msg_content, parse_mode=ParseMode.HTML),
-                    reply_markup=kb,
-                    thumb_url="https://telegra.ph/file/206f477eef1108ef91866.png"
-                )
-            )
-
-        await update.inline_query.answer(results, cache_time=1, is_personal=True)
+        ]
+        await update.inline_query.answer(results, cache_time=0, is_personal=True)
     except Exception as e:
         logger.exception("Error in handle_inline_whisper:")
 # ==========================================
