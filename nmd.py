@@ -3911,7 +3911,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if clean_raw in help_triggers:
             txt = (
                 '<b>سلام عزیزم به ربات من خوش اومدی! <tg-emoji emoji-id="5352750090974929602">😍</tg-emoji></b>\n\n'
-                '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه اژدها کوچولو هست آشنا بشی! 🐲</b>'
+                '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه اژدها کوچولو هست آشنا بشی! <tg-emoji emoji-id="5884128023271182329">🐉</tg-emoji></b>'
             )
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun", style="primary", icon_custom_emoji_id="5415940089375106928"),
@@ -3921,7 +3921,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
             return
-
         # --------------------------------------
         # REPORT SYSTEM (GROUP ONLY)
         # --------------------------------------
@@ -4416,7 +4415,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     set_cooldown_data(db, chat_id, "ship", {"u1": u1_dict, "u2": u2_dict, "last_msg_id": sent_msg.message_id})
                 else:
                     await update.message.reply_text(
-                        '<b>❌ اعضای کافی موجود نیست! <tg-emoji emoji-id="5857415006022278161">❌</tg-emoji></b>',
+                        '<b> اعضای کافی موجود نیست! <tg-emoji emoji-id="5857415006022278161">❌</tg-emoji></b>',
                         parse_mode=ParseMode.HTML
                     )
             return
