@@ -1896,8 +1896,9 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
         match = WHISPER_PATTERN.match(query)
         
         if not match:
+            # متن راهنما بدون تگ پیشرفته tg-emoji برای تست
             help_text = (
-                '<b><tg-emoji emoji-id="6084584811379299518">🔗</tg-emoji> آموزش نجوا در ربات گودی!</b>\n\n'
+                '<b>🔗 آموزش نجوا در ربات گودی!</b>\n\n'
                 '<b>پیام خود را جلوی یوزرنیم ربات نوشته و در انتهای پیام خود یوزرنیم یا آیدی عددی فرد دریافت کننده را وارد کنید.</b>'
             )
             results.append(
@@ -1944,7 +1945,7 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
                 ]
             ])
 
-            msg_content = f'<b><tg-emoji emoji-id="5418343338325582149">💬</tg-emoji> یک نجوا برای کاربر {target_raw} ارسال شد.</b>'
+            msg_content = f'<b>💬 یک نجوا برای کاربر {target_raw} ارسال شد.</b>'
 
             results.append(
                 InlineQueryResultArticle(
