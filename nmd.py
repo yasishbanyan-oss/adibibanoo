@@ -18,9 +18,10 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReactionTypeEmoji
+    ReactionTypeEmoji,
+    MessageEntity
 )
-from telegram.constants import ParseMode, ChatMemberStatus, PollType
+from telegram.constants import ParseMode, ChatMemberStatus, PollType, MessageEntityType
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -46,6 +47,9 @@ BROADCAST_CANCEL_FLAG = False
 
 # Fixed Reaction
 FIXED_REACTION = "❤️"
+
+# Custom Emoji for Checkmark
+CHECK_CUSTOM_EMOJI_ID = "5830144944399981619"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -94,17 +98,77 @@ CLEANUP_PATTERN = re.compile(r"^\s*حذف\s+(?P<count>-?\d+|[a-zA-Z]+)?\s*$", re
 FUN_NAMED_PATTERN = re.compile(r"^\s*ناموسی\s+بده(?:\s+(?P<count>\d+))?\s*$", re.IGNORECASE)
 FUN_NORMAL_PATTERN = re.compile(r"^\s*فحش\s+بده(?:\s+(?P<count>\d+))?\s*$", re.IGNORECASE)
 
+URL_REGEX = re.compile(r"(https?://\S+|t\.me/\S+|telegram\.me/\S+|www\.\S+)", re.IGNORECASE)
+ENGLISH_CHAR_REGEX = re.compile(r"[a-zA-Z]")
+PERSIAN_CHAR_REGEX = re.compile(r"[\u0600-\u06FF\uFB8A\u067E\u0686\u06AF\u200C\u200D]")
+EMOJI_REGEX = re.compile(
+    r"[\U00010000-\U0010ffff\u2600-\u27bf\u1f300-\u1f64f\u1f680-\u1f6ff\u1f900-\u1f9ff\u1fa70-\u1faff]",
+    flags=re.UNICODE
+)
+
 PERSIAN_PERMUTATIONS = {
     '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
     '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '٨': '8', '۹': '9',
     '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
 }
 
+# ==========================================
+# LOCK DEFINITIONS & METADATA
+# ==========================================
+ALL_LOCKS = {
+    "mention": {"name": "منشن", "page": 1},
+    "tag": {"name": "تگ", "page": 1},
+    "spoiler": {"name": "اسپویلر", "page": 1},
+    "video": {"name": "فیلم", "page": 1},
+    "photo": {"name": "عکس", "page": 1},
+    "document": {"name": "فایل", "page": 1},
+    "audio": {"name": "آهنگ", "page": 1},
+    "sticker": {"name": "استیکر", "page": 1},
+    "gif": {"name": "گیف", "page": 1},
+    "poll": {"name": "نظرسنجی", "page": 1},
+    "voice": {"name": "ویس", "page": 1},
+    "location": {"name": "مکان", "page": 1},
+    "contact": {"name": "مخاطب", "page": 1},
+    "edit_msg": {"name": "ویرایش پیام", "page": 1},
+    "edit_media": {"name": "ویرایش رسانه", "page": 1},
+    "forward": {"name": "فوروارد", "page": 2},
+    "emoji": {"name": "ایموجی", "page": 2},
+    "link": {"name": "لینک", "page": 2},
+    "english": {"name": "انگلیسی", "page": 2},
+    "persian": {"name": "فارسی", "page": 2},
+    "hashtag": {"name": "هشتگ", "page": 2},
+    "username": {"name": "یوزرنیم", "page": 2},
+}
+
+LOCK_TEXT_ALIASES = {
+    "منشن": "mention", "منشنها": "mention",
+    "تگ": "tag", "تگها": "tag",
+    "اسپویلر": "spoiler", "اسپویل": "spoiler",
+    "فیلم": "video", "ویدیو": "video", "ویدئو": "video",
+    "عکس": "photo", "تصویر": "photo",
+    "فایل": "document", "داکیومنت": "document", "سند": "document",
+    "آهنگ": "audio", "اهنگ": "audio", "موزیک": "audio", "صدا": "audio",
+    "استیکر": "sticker", "استیکرها": "sticker",
+    "گیف": "gif", "انیمیشن": "gif",
+    "نظرسنجی": "poll", "پل": "poll",
+    "ویس": "voice", "صدا ضبط شده": "voice",
+    "مکان": "location", "لوکیشن": "location", "موقعیت": "location",
+    "مخاطب": "contact", "مخاطبین": "contact", "شماره": "contact",
+    "ویرایش پیام": "edit_msg", "ادیت پیام": "edit_msg",
+    "ویرایش رسانه": "edit_media", "ادیت رسانه": "edit_media", "ویرایش مدیا": "edit_media",
+    "فوروارد": "forward", "فروارد": "forward", "بازارسال": "forward",
+    "ایموجی": "emoji", "اموجی": "emoji", "شکلک": "emoji",
+    "لینک": "link", "لینکها": "link", "پیوند": "link",
+    "انگلیسی": "english", "لاتین": "english",
+    "فارسی": "persian", "پارسی": "persian",
+    "هشتگ": "hashtag", "تگ هشتگ": "hashtag",
+    "یوزرنیم": "username", "ایدی": "username", "آیدی": "username"
+}
+
 def fa_to_en_digits(text: str) -> str:
     if not text:
         return "0"
-    res = "".join(PERSIAN_PERMUTATIONS.get(ch, ch) for ch in text)
-    return res
+    return "".join(PERSIAN_PERMUTATIONS.get(ch, ch) for ch in text)
 
 def clean_chat_id(text: str) -> int | None:
     if not text:
@@ -165,6 +229,9 @@ DEFAULT_POEMS = [
     "نه جانی ماند و نه دلداری ماند، {name} ماند و یک کونِ بادکرده!"
 ]
 
+def get_default_locks_structure() -> dict:
+    return {k: False for k in ALL_LOCKS.keys()}
+
 def get_default_group_structure() -> dict:
     return {
         "title": "",
@@ -180,12 +247,13 @@ def get_default_group_structure() -> dict:
         "random_reaction": True,
         "invite_link": None,
         "message_logs": [],
-        "user_last_messages": {}
+        "user_last_messages": {},
+        "locks": get_default_locks_structure()
     }
 
 def get_default_db_structure() -> dict:
     return {
-        "version": 4,
+        "version": 5,
         "members": {},
         "groups": {},
         "hourly_messages": {},
@@ -205,6 +273,8 @@ def get_default_db_structure() -> dict:
         "shutdown_message": None,
         "global_bans": {},
         "global_group_bans": {},
+        "global_fun_named": [],
+        "global_fun_normal": [],
         "features": {
             "world_time": True,
             "handsome": True,
@@ -243,10 +313,10 @@ def get_default_db_structure() -> dict:
     }
 
 def migrate_db_if_needed(data: dict) -> dict:
-    if data.get("version") == 4:
+    if data.get("version") == 5:
         return data
 
-    logger.info("Migrating database to v4...")
+    logger.info("Migrating database to v5 (Per-Group Lock System)...")
     if os.path.exists(DB_FILE):
         backup_file = f"{DB_FILE}.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         try:
@@ -259,7 +329,16 @@ def migrate_db_if_needed(data: dict) -> dict:
         if k in data and k != "states":
             new_db[k] = data[k]
 
-    new_db["version"] = 4
+    groups = new_db.setdefault("groups", {})
+    for cid_str, g_val in groups.items():
+        if "locks" not in g_val or not isinstance(g_val["locks"], dict):
+            g_val["locks"] = get_default_locks_structure()
+        else:
+            for lk in ALL_LOCKS.keys():
+                if lk not in g_val["locks"]:
+                    g_val["locks"][lk] = False
+
+    new_db["version"] = 5
     return new_db
 
 def load_db() -> dict:
@@ -348,10 +427,13 @@ def get_group_data(db: dict, chat_id: int | str) -> dict:
     else:
         if "user_last_messages" not in groups[cid_str]:
             groups[cid_str]["user_last_messages"] = {}
+        if "locks" not in groups[cid_str] or not isinstance(groups[cid_str]["locks"], dict):
+            groups[cid_str]["locks"] = get_default_locks_structure()
+            mark_db_dirty()
     return groups[cid_str]
 
 # ==========================================
-# BAN / UNBAN HELPERS & HTML TG-EMOJI SENDER
+# BAN / UNBAN HELPERS & NOTIFIERS
 # ==========================================
 def is_user_globally_banned(db: dict, user_id: int) -> tuple[bool, dict | None]:
     uid_str = str(user_id)
@@ -390,7 +472,6 @@ def is_group_globally_banned(db: dict, chat_id: int) -> tuple[bool, dict | None]
     return True, ban_info
 
 async def send_premium_ban_notification(bot, chat_id: int, is_group: bool, duration_str: str, reason_str: str) -> bool:
-    """Delivers ban notification using Telegram HTML tg-emoji tags."""
     if is_group:
         title = "گروه شما از ربات گودی بن شد!"
     else:
@@ -412,14 +493,12 @@ async def send_premium_ban_notification(bot, chat_id: int, is_group: bool, durat
             text=html_text,
             parse_mode=ParseMode.HTML
         )
-        logger.info(f"Successfully delivered Ban notification to {chat_id}")
         return True
     except Exception as e:
         logger.warning(f"Could not deliver Ban notification to chat {chat_id}: {e}")
         return False
 
 async def send_premium_unban_notification(bot, chat_id: int, is_group: bool = False) -> bool:
-    """Delivers unban notification using Telegram HTML tg-emoji tags."""
     if is_group:
         header = "تبریک! "
         sub = "گروه شما از محدودیت ربات خارج شد."
@@ -438,7 +517,6 @@ async def send_premium_unban_notification(bot, chat_id: int, is_group: bool = Fa
             text=html_text,
             parse_mode=ParseMode.HTML
         )
-        logger.info(f"Successfully delivered Unban notification to {chat_id}")
         return True
     except Exception as e:
         logger.warning(f"Could not deliver Unban notification to {chat_id}: {e}")
@@ -988,6 +1066,116 @@ async def global_security_guard(update: Update, context: ContextTypes.DEFAULT_TY
         logger.error(f"Error in global_security_guard: {e}")
 
 # ==========================================
+# GROUP LOCK ENFORCER (MIDDLEWARE GROUP -5)
+# ==========================================
+async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Enforces active group locks on non-admin members with high performance."""
+    chat = update.effective_chat
+    user = update.effective_user
+    msg = update.message or update.edited_message
+
+    if not chat or chat.type not in ["group", "supergroup"] or not user or not msg:
+        return
+
+    # Whitelist bot and authorized admins/owner
+    if user.is_bot or await is_admin_or_owner(context, chat.id, user.id):
+        return
+
+    db = load_db()
+    g_data = get_group_data(db, chat.id)
+    locks = g_data.get("locks", {})
+
+    # Quick bypass if no lock is active in this group
+    if not any(locks.values()):
+        return
+
+    is_edited = update.edited_message is not None
+    should_delete = False
+
+    # 1. Edit locks
+    if is_edited:
+        has_media = bool(msg.photo or msg.video or msg.animation or msg.audio or msg.voice or msg.document or msg.sticker)
+        if has_media and locks.get("edit_media", False):
+            should_delete = True
+        elif not has_media and locks.get("edit_msg", False):
+            should_delete = True
+
+    # 2. Media locks
+    if not should_delete:
+        if locks.get("photo", False) and bool(msg.photo): should_delete = True
+        elif locks.get("video", False) and bool(msg.video): should_delete = True
+        elif locks.get("gif", False) and bool(msg.animation): should_delete = True
+        elif locks.get("audio", False) and bool(msg.audio): should_delete = True
+        elif locks.get("voice", False) and bool(msg.voice): should_delete = True
+        elif locks.get("document", False) and bool(msg.document): should_delete = True
+        elif locks.get("sticker", False) and bool(msg.sticker): should_delete = True
+        elif locks.get("location", False) and bool(msg.location or msg.venue): should_delete = True
+        elif locks.get("contact", False) and bool(msg.contact): should_delete = True
+        elif locks.get("poll", False) and bool(msg.poll): should_delete = True
+
+    # 3. Forward lock
+    if not should_delete and locks.get("forward", False):
+        if bool(msg.forward_origin or msg.forward_date or msg.forward_from or msg.forward_from_chat):
+            should_delete = True
+
+    # 4. Content & Entity-based locks
+    if not should_delete:
+        text_content = msg.text or msg.caption or ""
+        entities = list(msg.entities or []) + list(msg.caption_entities or [])
+
+        # Link lock
+        if locks.get("link", False):
+            if any(e.type in [MessageEntityType.URL, MessageEntityType.TEXT_LINK] for e in entities) or URL_REGEX.search(text_content):
+                should_delete = True
+
+        # Mention lock
+        if not should_delete and locks.get("mention", False):
+            if any(e.type in [MessageEntityType.MENTION, MessageEntityType.TEXT_MENTION] for e in entities):
+                should_delete = True
+
+        # Tag lock
+        if not should_delete and locks.get("tag", False):
+            if "@" in text_content or any(e.type == MessageEntityType.MENTION for e in entities):
+                should_delete = True
+
+        # Username lock
+        if not should_delete and locks.get("username", False):
+            if any(e.type == MessageEntityType.MENTION for e in entities) or ("@" in text_content and not text_content.startswith("/")):
+                should_delete = True
+
+        # Hashtag lock
+        if not should_delete and locks.get("hashtag", False):
+            if any(e.type == MessageEntityType.HASHTAG for e in entities) or "#" in text_content:
+                should_delete = True
+
+        # Spoiler lock
+        if not should_delete and locks.get("spoiler", False):
+            if any(e.type == MessageEntityType.SPOILER for e in entities):
+                should_delete = True
+
+        # Emoji lock
+        if not should_delete and locks.get("emoji", False):
+            if any(e.type == MessageEntityType.CUSTOM_EMOJI for e in entities) or EMOJI_REGEX.search(text_content):
+                should_delete = True
+
+        # English text lock
+        if not should_delete and locks.get("english", False):
+            if ENGLISH_CHAR_REGEX.search(text_content):
+                should_delete = True
+
+        # Persian text lock
+        if not should_delete and locks.get("persian", False):
+            if PERSIAN_CHAR_REGEX.search(text_content):
+                should_delete = True
+
+    if should_delete:
+        try:
+            await msg.delete()
+        except Exception as e:
+            logger.debug(f"Failed to delete locked message in {chat.id}: {e}")
+        raise ApplicationHandlerStop()
+
+# ==========================================
 # ADMIN & OWNER PANEL LOGIC
 # ==========================================
 def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
@@ -1006,6 +1194,10 @@ def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
         [
             InlineKeyboardButton(f"🚫 بن گروه ({banned_groups_count})", callback_data="ban_group_list_1", style="danger"),
             InlineKeyboardButton("🟢 انبن گروه", callback_data="unban_group_list_1", style="success")
+        ],
+        [
+            InlineKeyboardButton("😈 تنظیم فحش ناموسی", callback_data="owner_fun_named", style="danger"),
+            InlineKeyboardButton("😂 تنظیم فحش عادی", callback_data="owner_fun_normal", style="primary")
         ],
         [InlineKeyboardButton(f"📋 مشخصات گروه‌ها ({group_count})", callback_data="panel_owner_groups_1", style="primary")],
         [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
@@ -1028,8 +1220,88 @@ async def edit_owner_panel_message(query):
     text, keyboard = get_owner_panel_content(db)
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
+async def render_group_admin_panel_message(query, chat_id: int):
+    db = load_db()
+    g_data = get_group_data(db, chat_id)
+    title = html.escape(g_data.get("title") or "این گروه")
+    text = (
+        f"<b>🛠 پنل مدیریت اختصاصی گروه: {title}</b>\n\n"
+        "سلام عزیزم، به پنل مدیریت گروه خوش اومدی! 👋\n\n"
+        "از طریق دکمه‌های زیر می‌تونی تنظیمات ویژه همین گروه را مدیریت کنی."
+    )
+    buttons = [
+        [
+            InlineKeyboardButton("🔒 قفل ها", callback_data=f"panel_group_locks:{chat_id}:1", style="primary"),
+            InlineKeyboardButton("📋 لیست ها", callback_data=f"panel_group_lists:{chat_id}", style="primary")
+        ],
+        [
+            InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data=f"panel_group_advanced:{chat_id}", style="primary")
+        ],
+        [
+            InlineKeyboardButton("🔙 بستن", callback_data="panel_group_close", style="danger")
+        ]
+    ]
+    keyboard = InlineKeyboardMarkup(buttons)
+    await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+# ==========================================
+# PER-GROUP LOCKS PANEL RENDERING
+# ==========================================
+async def render_group_locks_panel(query, chat_id: int, page: int = 1):
+    db = load_db()
+    g_data = get_group_data(db, chat_id)
+    locks = g_data.get("locks", {})
+    title = html.escape(g_data.get("title") or "گروه")
+
+    text = (
+        f"🔒 <b>مدیریت قفل‌های اختصاصی گروه: {title}</b>\n"
+        f"📄 <b>صفحه {page} از ۲</b>\n\n"
+        "برای تغییر وضعیت روی دکمه قفل مورد نظر کلیک کنید:"
+    )
+
+    page_locks = [k for k, v in ALL_LOCKS.items() if v["page"] == page]
+    buttons = []
+    
+    # 2 columns per row
+    for i in range(0, len(page_locks), 2):
+        row = []
+        k1 = page_locks[i]
+        is_on1 = locks.get(k1, False)
+        lbl1 = f"{ALL_LOCKS[k1]['name']} {'✅' if is_on1 else ''}".strip()
+        btn1 = InlineKeyboardButton(
+            lbl1,
+            callback_data=f"tgl_lock:{chat_id}:{k1}:{page}",
+            icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on1 else None
+        )
+        row.append(btn1)
+
+        if i + 1 < len(page_locks):
+            k2 = page_locks[i + 1]
+            is_on2 = locks.get(k2, False)
+            lbl2 = f"{ALL_LOCKS[k2]['name']} {'✅' if is_on2 else ''}".strip()
+            btn2 = InlineKeyboardButton(
+                lbl2,
+                callback_data=f"tgl_lock:{chat_id}:{k2}:{page}",
+                icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on2 else None
+            )
+            row.append(btn2)
+        buttons.append(row)
+
+    nav_row = []
+    if page == 1:
+        nav_row.append(InlineKeyboardButton("صفحه بعد ▶️", callback_data=f"panel_group_locks:{chat_id}:2", style="primary"))
+    else:
+        nav_row.append(InlineKeyboardButton("◀️ صفحه قبل", callback_data=f"panel_group_locks:{chat_id}:1", style="primary"))
+    
+    buttons.append(nav_row)
+    buttons.append([InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data=f"panel_group_main:{chat_id}", style="primary")])
+
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+
+# ==========================================
+# OWNER BAN/UNBAN GROUP PICKERS
+# ==========================================
 async def render_ban_group_picker(query, page: int, db: dict):
-    """Presents interactive list of groups to ban without typing Chat ID."""
     active_chats = db.get("active_chats", [])
     banned_chats = db.get("global_group_bans", {})
     available_chats = [cid for cid in active_chats if str(cid) not in banned_chats]
@@ -1062,7 +1334,6 @@ async def render_ban_group_picker(query, page: int, db: dict):
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 async def render_unban_group_picker(query, page: int, db: dict):
-    """Presents interactive list of banned groups to unban with single click."""
     banned_chats = list(db.get("global_group_bans", {}).keys())
 
     if not banned_chats:
@@ -1108,33 +1379,22 @@ async def render_shutdown_panel(query, db: dict):
     ]
     await query.message.edit_text(f"<b>مدیریت خاموشی ربات</b>\n\n{status_str}", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
-async def render_group_admin_panel_message(query, chat_id: int):
-    db = load_db()
-    g_data = get_group_data(db, chat_id)
-    title = html.escape(g_data.get("title") or "این گروه")
+async def render_owner_fun_panel(query, fun_type: str, db: dict):
+    title = "😈 مدیریت فحش ناموسی ربات" if fun_type == "named" else "😂 مدیریت فحش عادی ربات"
+    key = "global_fun_named" if fun_type == "named" else "global_fun_normal"
+    items = db.get(key, [])
+    
     text = (
-        f"<b>🛠 پنل مدیریت اختصاصی گروه: {title}</b>\n\n"
-        "سلام عزیزم، به پنل مدیریت گروه خوش اومدی! 👋\n\n"
-        "از طریق دکمه‌های زیر می‌تونی تنظیمات ویژه همین گروه را مدیریت کنی."
+        f"<b>{title}</b>\n\n"
+        f"<b>تعداد پاسخ‌های ثبت‌شده:</b> <code>{len(items)}</code> عدد"
     )
+
     buttons = [
-        [
-            InlineKeyboardButton("🔒 قفل ها", callback_data=f"panel_group_locks:{chat_id}", style="primary"),
-            InlineKeyboardButton("📋 لیست ها", callback_data=f"panel_group_lists:{chat_id}", style="primary")
-        ],
-        [
-            InlineKeyboardButton("😈 تنظیم فحش ناموسی", callback_data=f"grp_fun_named:{chat_id}", style="danger"),
-            InlineKeyboardButton("😂 تنظیم فحش عادی", callback_data=f"grp_fun_normal:{chat_id}", style="primary")
-        ],
-        [
-            InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data=f"panel_group_advanced:{chat_id}", style="primary")
-        ],
-        [
-            InlineKeyboardButton("🔙 بستن", callback_data="panel_group_close", style="danger")
-        ]
+        [InlineKeyboardButton("➕ افزودن پاسخ", callback_data=f"own_fun_add:{fun_type}", style="success")],
+        [InlineKeyboardButton("🧹 حذف همه پاسخ‌ها", callback_data=f"own_fun_del_all:{fun_type}", style="danger")],
+        [InlineKeyboardButton("🔙 بازگشت به پنل اصلی", callback_data="panel_owner_main", style="primary")]
     ]
-    keyboard = InlineKeyboardMarkup(buttons)
-    await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
 async def render_welcome_panel_message(query, chat_id: int, db: dict):
     g_data = get_group_data(db, chat_id)
@@ -1181,25 +1441,6 @@ async def render_comment_panel_message(query, chat_id: int, db: dict):
         [InlineKeyboardButton(toggle_btn_text, callback_data=f"comment_toggle:{chat_id}", style="primary")],
         [InlineKeyboardButton("🗑 حذف کامنت ذخیره‌شده", callback_data=f"comment_delete:{chat_id}", style="danger")],
         [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_advanced:{chat_id}", style="primary")]
-    ]
-    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-
-async def render_group_fun_panel(query, fun_type: str, chat_id: int, db: dict):
-    title = "😈 مدیریت فحش ناموسی گروه" if fun_type == "named" else "😂 مدیریت فحش عادی گروه"
-    key = "fun_named_responses" if fun_type == "named" else "fun_normal_responses"
-    g_data = get_group_data(db, chat_id)
-    items = g_data.get(key, [])
-    
-    text = (
-        f"<b>{title}</b>\n\n"
-        f"<b>تعداد پاسخ‌های ثبت‌شده برای این گروه:</b> <code>{len(items)}</code> عدد"
-    )
-
-    buttons = [
-        [InlineKeyboardButton("➕ افزودن پاسخ", callback_data=f"grp_fun_add:{fun_type}:{chat_id}", style="success")],
-        [InlineKeyboardButton("📋 مشاهده تعداد", callback_data=f"grp_fun_list:{fun_type}:{chat_id}", style="primary")],
-        [InlineKeyboardButton("🧹 حذف همه پاسخ‌ها", callback_data=f"grp_fun_del_all:{fun_type}:{chat_id}", style="danger")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="primary")]
     ]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -1332,7 +1573,7 @@ def build_xo_keyboard(game_id: str, board: list, is_finished: bool = False) -> I
     return InlineKeyboardMarkup(buttons)
 
 # ==========================================
-# DWOZ / TIC-TAC-TOE INDEPENDENT LOGIC
+# DWOZ / TIC-TAC-TOE LOGIC
 # ==========================================
 async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1403,6 +1644,43 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Coming soon..!", show_alert=True)
         return
 
+    # LOCKS PANEL NAVIGATION & TOGGLE
+    elif data.startswith("panel_group_locks:"):
+        parts = data.split(":")
+        cid = int(parts[1])
+        page = int(parts[2]) if len(parts) > 2 else 1
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        await render_group_locks_panel(query, cid, page)
+        return
+
+    elif data.startswith("tgl_lock:"):
+        parts = data.split(":")
+        cid = int(parts[1])
+        lock_key = parts[2]
+        page = int(parts[3]) if len(parts) > 3 else 1
+
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+
+        g_data = get_group_data(db, cid)
+        locks = g_data.setdefault("locks", get_default_locks_structure())
+        locks[lock_key] = not locks.get(lock_key, False)
+        
+        status_word = "فعال" if locks[lock_key] else "غیرفعال"
+        lock_fa_name = ALL_LOCKS.get(lock_key, {}).get("name", lock_key)
+
+        log_admin_action(db, user_id, query.from_user.full_name, g_data.get("title", ""), cid, f"تغییر قفل {lock_fa_name}", f"وضعیت جدید: {status_word}")
+        mark_db_dirty()
+        save_db(force=True)
+
+        alert_msg = f"قفل {lock_fa_name} با موفقیت {status_word} شد! ✅"
+        await query.answer(alert_msg, show_alert=True)
+        await render_group_locks_panel(query, cid, page)
+        return
+
     # SHUTDOWN MENU
     elif data == "panel_shutdown_menu":
         if int(user_id) != int(OWNER_ID):
@@ -1458,7 +1736,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text("لطفاً آیدی عددی کاربری که می‌خواهید انبن شود را ارسال کنید:", reply_markup=kb)
         return
 
-    # GROUP BAN & UNBAN WITH BUTTON LISTS (NO MANUAL ID NEEDED)
+    # GROUP BAN & UNBAN WITH BUTTON LISTS
     elif data.startswith("ban_group_list_"):
         if int(user_id) != int(OWNER_ID):
             await query.answer("❌ فقط مالک کل.", show_alert=True)
@@ -1507,6 +1785,59 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await query.answer("این گروه بن نیست.", show_alert=True)
         await render_unban_group_picker(query, 1, db)
+        return
+
+    # OWNER GLOBAL FUN RESPONSES
+    elif data == "owner_fun_named":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        await render_owner_fun_panel(query, "named", db)
+        return
+
+    elif data == "owner_fun_normal":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        await render_owner_fun_panel(query, "normal", db)
+        return
+
+    elif data.startswith("own_fun_add:"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        fun_type = data.split(":")[1]
+        state_key = "waiting_fun_named_msg" if fun_type == "named" else "waiting_fun_normal_msg"
+        db["states"][state_key] = {str(user_id): "global"}
+        mark_db_dirty()
+        save_db()
+        title = "ناموسی" if fun_type == "named" else "عادی"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data=f"own_fun_done:{fun_type}", style="success")]])
+        await query.message.edit_text(f"➕ لطفاً پاسخ‌های فحش {title} سراسری را بفرستید:\n\nدر پایان «✅ دان» را بزنید.", reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+
+    elif data.startswith("own_fun_done:"):
+        fun_type = data.split(":")[1]
+        state_key = "waiting_fun_named_msg" if fun_type == "named" else "waiting_fun_normal_msg"
+        if str(user_id) in db["states"].get(state_key, {}):
+            del db["states"][state_key][str(user_id)]
+            mark_db_dirty()
+            save_db(force=True)
+        await query.answer("تنظیم پاسخ‌ها ذخیره شد.", show_alert=True)
+        await render_owner_fun_panel(query, fun_type, db)
+        return
+
+    elif data.startswith("own_fun_del_all:"):
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        fun_type = data.split(":")[1]
+        key = "global_fun_named" if fun_type == "named" else "global_fun_normal"
+        db[key] = []
+        mark_db_dirty()
+        save_db(force=True)
+        await query.answer("تمام پاسخ‌های این بخش حذف شدند.", show_alert=True)
+        await render_owner_fun_panel(query, fun_type, db)
         return
 
     elif data == "cancel_current_flow":
@@ -1754,23 +2085,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text("🚫 عملیات ارسال همگانی لغو شد.")
         return
 
-    # GROUP ADMIN NAVIGATION
+    # GROUP ADMIN ADVANCED
     elif data.startswith("panel_group_main:"):
         cid = int(data.replace("panel_group_main:", ""))
         if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
         await render_group_admin_panel_message(query, cid)
-        return
-
-    elif data.startswith("panel_group_locks:"):
-        cid = int(data.replace("panel_group_locks:", ""))
-        if not await is_admin_or_owner(context, cid, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        text = "🚧 <b>این بخش به‌زودی فعال می‌شود!</b>\n\nComing Soon"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{cid}", style="primary")]])
-        await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
     elif data.startswith("panel_group_advanced:"):
@@ -1838,79 +2159,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.delete()
         except Exception:
             pass
-        return
-
-    # FUN MANAGERS
-    elif data.startswith("grp_fun_named:"):
-        cid = int(data.replace("grp_fun_named:", ""))
-        if not await is_admin_or_owner(context, cid, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        await render_group_fun_panel(query, "named", cid, db)
-        return
-
-    elif data.startswith("grp_fun_normal:"):
-        cid = int(data.replace("grp_fun_normal:", ""))
-        if not await is_admin_or_owner(context, cid, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        await render_group_fun_panel(query, "normal", cid, db)
-        return
-
-    elif data.startswith("grp_fun_add:"):
-        parts = data.split(":")
-        fun_type = parts[1]
-        cid = int(parts[2])
-        if not await is_admin_or_owner(context, cid, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        state_key = "waiting_fun_named_msg" if fun_type == "named" else "waiting_fun_normal_msg"
-        db["states"][state_key][str(user_id)] = cid
-        mark_db_dirty()
-        save_db()
-
-        title = "ناموسی" if fun_type == "named" else "عادی"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data=f"grp_fun_done:{fun_type}:{cid}", style="success")]])
-        await query.message.edit_text(f"<b>➕ لطفاً پاسخ‌های فحش {title} گروه را ارسال کنید:\n\nهر زمان تمام شد «✅ دان» را بزنید.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
-        return
-
-    elif data.startswith("grp_fun_done:"):
-        parts = data.split(":")
-        fun_type = parts[1]
-        cid = int(parts[2])
-        state_key = "waiting_fun_named_msg" if fun_type == "named" else "waiting_fun_normal_msg"
-        if str(user_id) in db["states"][state_key]:
-            del db["states"][state_key][str(user_id)]
-            mark_db_dirty()
-            save_db(force=True)
-        await query.answer("تنظیم پاسخ‌ها به پایان رسید.", show_alert=True)
-        await render_group_fun_panel(query, fun_type, cid, db)
-        return
-
-    elif data.startswith("grp_fun_del_all:"):
-        parts = data.split(":")
-        fun_type = parts[1]
-        cid = int(parts[2])
-        if not await is_admin_or_owner(context, cid, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        key = "fun_named_responses" if fun_type == "named" else "fun_normal_responses"
-        g_data = get_group_data(db, cid)
-        g_data[key] = []
-        mark_db_dirty()
-        save_db(force=True)
-        await query.answer("تمام پاسخ‌های این بخش برای گروه شما حذف شد.", show_alert=True)
-        await render_group_fun_panel(query, fun_type, cid, db)
-        return
-
-    elif data.startswith("grp_fun_list:"):
-        parts = data.split(":")
-        fun_type = parts[1]
-        cid = int(parts[2])
-        key = "fun_named_responses" if fun_type == "named" else "fun_normal_responses"
-        g_data = get_group_data(db, cid)
-        items = g_data.get(key, [])
-        await query.answer(f"تعداد {len(items)} پاسخ برای این گروه ثبت گردیده است.", show_alert=True)
         return
 
     # USER BROADCAST
@@ -2626,6 +2874,13 @@ async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not update.message:
         return
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    if update.effective_chat.type in ["group", "supergroup"]:
+        if await is_admin_or_owner(context, chat_id, user_id):
+            await command_admin_panel(update, context)
+            return
+
     if int(user_id) != int(OWNER_ID):
         await update.message.reply_text("❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!")
         return
@@ -2654,12 +2909,8 @@ async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     buttons = [
         [
-            InlineKeyboardButton("🔒 قفل ها", callback_data=f"panel_group_locks:{chat_id}", style="primary"),
+            InlineKeyboardButton("🔒 قفل ها", callback_data=f"panel_group_locks:{chat_id}:1", style="primary"),
             InlineKeyboardButton("📋 لیست ها", callback_data=f"panel_group_lists:{chat_id}", style="primary")
-        ],
-        [
-            InlineKeyboardButton("😈 تنظیم فحش ناموسی", callback_data=f"grp_fun_named:{chat_id}", style="danger"),
-            InlineKeyboardButton("😂 تنظیم فحش عادی", callback_data=f"grp_fun_normal:{chat_id}", style="primary")
         ],
         [
             InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data=f"panel_group_advanced:{chat_id}", style="primary")
@@ -2701,19 +2952,15 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         done_anything = True
 
     if user_id in states.get("waiting_fun_named_msg", {}):
-        cid = states["waiting_fun_named_msg"][user_id]
         del states["waiting_fun_named_msg"][user_id]
-        g_data = get_group_data(db, cid)
-        count = len(g_data.get("fun_named_responses", []))
-        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش ناموسی این گروه پایان یافت. تعداد: <b>{count}</b>", parse_mode=ParseMode.HTML)
+        count = len(db.get("global_fun_named", []))
+        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش ناموسی سراسری پایان یافت. تعداد: <b>{count}</b>", parse_mode=ParseMode.HTML)
         done_anything = True
 
     if user_id in states.get("waiting_fun_normal_msg", {}):
-        cid = states["waiting_fun_normal_msg"][user_id]
         del states["waiting_fun_normal_msg"][user_id]
-        g_data = get_group_data(db, cid)
-        count = len(g_data.get("fun_normal_responses", []))
-        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش عادی این گروه پایان یافت. تعداد: <b>{count}</b>", parse_mode=ParseMode.HTML)
+        count = len(db.get("global_fun_normal", []))
+        await update.message.reply_text(f"✅ ثبت پاسخ‌های فحش عادی سراسری پایان یافت. تعداد: <b>{count}</b>", parse_mode=ParseMode.HTML)
         done_anything = True
 
     if done_anything:
@@ -2744,7 +2991,46 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean_raw = raw_text.strip().lower()
         norm_text = normalize_text(raw_text)
 
+        # --------------------------------------
+        # TEXT LOCK CONTROL COMMANDS (ADMIN ONLY)
+        # --------------------------------------
+        if update.effective_chat.type in ["group", "supergroup"] and await is_admin_or_owner(context, chat_id, user_id):
+            clean_cmd = re.sub(r"[!/؟?؛\-_]", "", clean_raw).strip()
+            
+            # Pattern: "قفل X" or "حذف قفل X" / "بازکردن قفل X"
+            lock_action = None
+            target_lock_name = None
+
+            if clean_cmd.startswith("قفل "):
+                lock_action = True
+                target_lock_name = clean_cmd[4:].strip()
+            elif clean_cmd.startswith("حذف قفل "):
+                lock_action = False
+                target_lock_name = clean_cmd[8:].strip()
+            elif clean_cmd.startswith("بازکردن قفل ") or clean_cmd.startswith("باز کردن قفل "):
+                lock_action = False
+                target_lock_name = clean_cmd.replace("بازکردن قفل ", "").replace("باز کردن قفل ", "").strip()
+
+            if lock_action is not None and target_lock_name:
+                lock_key = LOCK_TEXT_ALIASES.get(target_lock_name)
+                if lock_key and lock_key in ALL_LOCKS:
+                    g_data = get_group_data(db, chat_id)
+                    locks = g_data.setdefault("locks", get_default_locks_structure())
+                    locks[lock_key] = lock_action
+                    mark_db_dirty()
+                    save_db(force=True)
+
+                    fa_name = ALL_LOCKS[lock_key]["name"]
+                    action_word = "فعال" if lock_action else "غیرفعال"
+                    log_admin_action(db, user_id, update.effective_user.full_name, chat.title, chat_id, f"دستور متنی قفل {fa_name}", f"وضعیت: {action_word}")
+
+                    reply_text = f"قفل {fa_name} با موفقیت {action_word} شد! ✅"
+                    await update.message.reply_text(reply_text)
+                    return
+
+        # --------------------------------------
         # OWNER FLOWS IN PV / SPECIFIC SESSIONS
+        # --------------------------------------
         if int(user_id) == int(OWNER_ID):
             ban_flows = db.setdefault("states", {}).setdefault("ban_flow", {})
             
@@ -2860,7 +3146,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.message.reply_text(f"✅ بن کاربر <code>{target_uid_str}</code> با موفقیت برداشته شد.", parse_mode=ParseMode.HTML)
                     return
 
-                # GROUP BAN: REASON (PICKED FROM BUTTONS)
+                # GROUP BAN: REASON
                 elif step == "ban_group_reason":
                     flow["reason"] = raw_text.strip()
                     flow["step"] = "ban_group_duration"
@@ -2912,9 +3198,29 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     mark_db_dirty()
                     save_db(force=True)
 
-                    # Send immediate ban notification inside the group
                     await send_premium_ban_notification(context.bot, target_cid, is_group=True, duration_str=dur_display, reason_str=reason)
                     await update.message.reply_text(f"🚨 <b>گروه <code>{target_cid}</code> با موفقیت بن شد.</b>\nمدت: <b>{dur_display}</b>", parse_mode=ParseMode.HTML)
+                    return
+
+            # OWNER GLOBAL FUN RESPONSES ADD
+            if u_str in db["states"].get("waiting_fun_named_msg", {}):
+                payload = extract_media_payload(update.message)
+                if payload:
+                    db.setdefault("global_fun_named", []).append(payload)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data="own_fun_done:named", style="success")]])
+                    await update.message.reply_text(f"✅ پاسخ فحش ناموسی ذخیره شد (کل: {len(db['global_fun_named'])}).", reply_markup=kb, parse_mode=ParseMode.HTML)
+                    return
+
+            if u_str in db["states"].get("waiting_fun_normal_msg", {}):
+                payload = extract_media_payload(update.message)
+                if payload:
+                    db.setdefault("global_fun_normal", []).append(payload)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data="own_fun_done:normal", style="success")]])
+                    await update.message.reply_text(f"✅ پاسخ فحش عادی ذخیره شد (کل: {len(db['global_fun_normal'])}).", reply_markup=kb, parse_mode=ParseMode.HTML)
                     return
 
             # SHUTDOWN MESSAGE
@@ -3139,12 +3445,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             g_data = get_group_data(db, chat_id)
-            key = "fun_named_responses" if is_named else "fun_normal_responses"
-            responses_list = g_data.get(key, [])
+            key_grp = "fun_named_responses" if is_named else "fun_normal_responses"
+            key_glob = "global_fun_named" if is_named else "global_fun_normal"
+            responses_list = g_data.get(key_grp, []) or db.get(key_glob, [])
 
             if not responses_list:
                 title = "ناموسی" if is_named else "عادی"
-                await update.message.reply_text(f"<b>هنوز هیچ پاسخ فحش {title} برای این گروه ثبت نشده است!</b>", parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f"<b>هنوز هیچ پاسخ فحش {title} برای ربات ثبت نشده است!</b>", parse_mode=ParseMode.HTML)
                 return
 
             target_msg_id = update.message.reply_to_message.message_id if update.message.reply_to_message else None
@@ -3207,35 +3514,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if clean_raw in ["پنل", "admin", "/admin"] and await is_admin_or_owner(context, chat_id, user_id):
             await command_admin_panel(update, context)
             return
-
-        # Fun responses adding states
-        if u_str in db["states"].get("waiting_fun_named_msg", {}):
-            target_cid = db["states"]["waiting_fun_named_msg"][u_str]
-            if await is_admin_or_owner(context, target_cid, user_id):
-                payload = extract_media_payload(update.message)
-                if payload:
-                    g_data = get_group_data(db, target_cid)
-                    named_list = g_data.setdefault("fun_named_responses", [])
-                    named_list.append(payload)
-                    mark_db_dirty()
-                    save_db(force=True)
-                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data=f"grp_fun_done:named:{target_cid}", style="success")]])
-                    await update.message.reply_text(f"✅ پاسخ فحش ناموسی این گروه ذخیره شد (کل: {len(named_list)}).", reply_markup=kb, parse_mode=ParseMode.HTML)
-                    return
-
-        if u_str in db["states"].get("waiting_fun_normal_msg", {}):
-            target_cid = db["states"]["waiting_fun_normal_msg"][u_str]
-            if await is_admin_or_owner(context, target_cid, user_id):
-                payload = extract_media_payload(update.message)
-                if payload:
-                    g_data = get_group_data(db, target_cid)
-                    norm_list = g_data.setdefault("fun_normal_responses", [])
-                    norm_list.append(payload)
-                    mark_db_dirty()
-                    save_db(force=True)
-                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ دان", callback_data=f"grp_fun_done:normal:{target_cid}", style="success")]])
-                    await update.message.reply_text(f"✅ پاسخ فحش عادی این گروه ذخیره شد (کل: {len(norm_list)}).", reply_markup=kb, parse_mode=ParseMode.HTML)
-                    return
 
         # Welcome and Comment Media Set States
         if u_str in db["states"].get("waiting_welcome_msg", {}):
@@ -3557,7 +3835,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
         # --------------------------------------
-        # FUN FEATURES (Handsome, Jende, Koni, Jaghi, Koskhal, Sexy, Jazab)
+        # FUN FEATURES
         # --------------------------------------
         elif norm_text in ["خوشتیپ کیه", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
             word_label = "خوژتیپ" if "خوژ" in norm_text else "خوشتیپ"
@@ -3766,15 +4044,13 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # 0. Global Interceptor Guard (Group -10)
-    app.add_handler(
-        MessageHandler(filters.ALL, global_security_guard),
-        group=-10
-    )
-    app.add_handler(
-        CallbackQueryHandler(global_security_guard),
-        group=-10
-    )
+    # 0. Global Security Guard (Group -10)
+    app.add_handler(MessageHandler(filters.ALL, global_security_guard), group=-10)
+    app.add_handler(CallbackQueryHandler(global_security_guard), group=-10)
+
+    # 1. Group Lock Enforcer for Regular Messages & Edited Messages (Group -5)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, enforce_group_locks), group=-5)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.UpdateType.EDITED_MESSAGE, enforce_group_locks), group=-5)
 
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
@@ -3783,26 +4059,26 @@ def main():
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
-    # 1. Automatic comment for channel connected discussion group
+    # 2. Automatic comment for channel connected discussion group
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.IS_AUTOMATIC_FORWARD, handle_automatic_channel_comments), group=-3)
 
-    # 2. Welcome system
+    # 3. Welcome system
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
 
-    # 3. Dwoz game
+    # 4. Dwoz game
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler),
         group=-1
     )
 
-    # 4. General message handler
+    # 5. General message handler
     app.add_handler(
         MessageHandler(filters.ALL & (~filters.COMMAND), handle_messages)
     )
 
     app.add_error_handler(global_error_handler)
 
-    logger.info("Bot is running with fully fixed Ban/Unban architecture...")
+    logger.info("Bot is running with full per-group lock system...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
