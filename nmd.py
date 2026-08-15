@@ -4128,19 +4128,21 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 c_time = datetime.now(ZoneInfo(c_data["tz"])).strftime("%H:%M:%S")
                 msg = f'<b>{c_data["emoji"]} ساعت {c_name}: {c_time}</b>'
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                return
 
-            elif norm_text in ["ساعت جهانی", "ساعت"]:
+            elif norm_text in ["ساعت", "ساعت جهانی"]:
                 lines = ['<b><tg-emoji emoji-id="5399898266265475100">🌍</tg-emoji> ساعت جهانی برخی از کشورها :</b>\n']
                 for c_name, c_data in WORLD_COUNTRIES.items():
                     c_time = datetime.now(ZoneInfo(c_data["tz"])).strftime("%H:%M:%S")
                     lines.append(f'<b>{c_data["emoji"]} {c_name}: {c_time}</b>')
                 
                 await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
-        # --------------------------------------
+                return
+# --------------------------------------
         # FUN FEATURES WITH PREMIUM EMOJIS & COOLDOWN
         # --------------------------------------
         # ۲. خوشتیپ / خوژتیپ
-        elif is_group and norm_text in ["خوشتیپ کیه", "خوشتیپ کی", "خوژتیپ کیه", "خوژتیپ کی", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
+        if is_group and norm_text in ["خوشتیپ کیه", "خوشتیپ کی", "خوژتیپ کیه", "خوژتیپ کی", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
             word_label = "خوژتیپ" if "خوژ" in norm_text else "خوشتیپ"
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "handsome")
             
@@ -4166,6 +4168,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f'<b><tg-emoji emoji-id="5321484996802797866">😎</tg-emoji> | {target_mention}</b>'
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                else:
+                    await update.message.reply_text('<b>❌ کاربری در حافظه گروه پیدا نشد!</b>', parse_mode=ParseMode.HTML)
+            return
 
         # ۳. جنده
         elif is_group and norm_text in ["جنده کیه", "جنده کی", "جنده"] and features.get("jende", True):
@@ -4192,6 +4197,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f'<b><tg-emoji emoji-id="4974545355472372800">🖤</tg-emoji> | {target_mention}</b>'
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                else:
+                    await update.message.reply_text('<b>❌ کاربری در حافظه گروه پیدا نشد!</b>', parse_mode=ParseMode.HTML)
+            return
 
         # ۴. کونی
         elif is_group and norm_text in ["کونی کیه", "کونی کی", "کونی"] and features.get("koni", True):
@@ -4218,6 +4226,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f'<b><tg-emoji emoji-id="4974439226830488153">🔞</tg-emoji> | {target_mention}</b>'
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                else:
+                    await update.message.reply_text('<b>❌ کاربری در حافظه گروه پیدا نشد!</b>', parse_mode=ParseMode.HTML)
+            return
 
         # ۵. جقی
         elif is_group and norm_text in ["جقی", "جقی کیه", "جقی گروه"] and features.get("jaghi", True):
@@ -4246,6 +4257,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f'<b>+ بزن که خوب میزنی رفیق گلم! <tg-emoji emoji-id="6033112209612082866">😂</tg-emoji></b>'
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                else:
+                    await update.message.reply_text('<b>❌ کاربری در حافظه گروه پیدا نشد!</b>', parse_mode=ParseMode.HTML)
+            return
 
         # ۶. کصخل / کسخل
         elif is_group and norm_text in ["کصخل", "کسخل", "کصخل گروه", "کسخل گروه"] and features.get("koskhal", True):
@@ -4273,6 +4287,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f'<b>+ هر کصخلی درمانی دارد!</b>'
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                else:
+                    await update.message.reply_text('<b>❌ کاربری در حافظه گروه پیدا نشد!</b>', parse_mode=ParseMode.HTML)
+            return
 
         # ۷. سکسی
         elif is_group and norm_text in ["سکسی", "سکسی گروه"] and features.get("sexy", True):
@@ -4299,8 +4316,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f'<b><tg-emoji emoji-id="5247009821508537591">🚬</tg-emoji> | {target_mention}</b>'
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                else:
+                    await update.message.reply_text('<b>❌ کاربری در حافظه گروه پیدا نشد!</b>', parse_mode=ParseMode.HTML)
+            return
 
-        # ادامه ۸. جذاب (تکمیل شده)
+        # ۸. جذاب
         elif is_group and norm_text in ["جذاب", "جذاب گروه"] and features.get("jazab", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jazab")
             if is_cd:
@@ -4327,8 +4347,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f'<b>عشقمممم شماره میدی پاره کنیم؟؟؟ <tg-emoji emoji-id="5773636884320226590">💋</tg-emoji></b>'
                     )
                     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                else:
+                    await update.message.reply_text('<b>❌ کاربری در حافظه گروه پیدا نشد!</b>', parse_mode=ParseMode.HTML)
+            return
 
-        # ۹. شیپ / کاپل (با مهلت ۳۰ ثانیه و نمایش آرا در کول‌دان)
+        # ۹. شیپ / کاپل
         elif is_group and norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
             if is_cd:
@@ -4396,8 +4419,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         '<b>❌ اعضای کافی موجود نیست! <tg-emoji emoji-id="5857415006022278161">❌</tg-emoji></b>',
                         parse_mode=ParseMode.HTML
                     )
+            return
 
-        # غذا با ایموجی‌های پریمیوم و متن عکس بالا
+        # غذا
         elif is_group and any(w in norm_text.split() for w in ["غذا", "غدا", "نهار", "شام"]) and features.get("food", True):
             g_data = get_group_data(db, chat_id)
             fl = g_data.get("foods", DEFAULT_FOODS)
@@ -4408,7 +4432,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f'<b><tg-emoji emoji-id="5357066069250948384">🐱</tg-emoji> | {html.escape(selected_food)}</b>'
                 )
                 await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-                return
+            return
 
         # شعر
         elif is_group and norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
@@ -4424,6 +4448,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             poem_template = random.choice(all_poems)
             final_poem = poem_template.format(name=target_name)
             await update.message.reply_text(f'<tg-emoji emoji-id="5859527571586161695">✍️</tg-emoji> <b>{final_poem}</b>', parse_mode=ParseMode.HTML)
+            return
 
         # لف
         elif is_group and LEF_PATTERN.search(raw_text) and features.get("lef", True):
@@ -4431,10 +4456,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ml = g_data.get("media_lef") or db.get("media_lef")
             if ml:
                 await send_media_payload(context.bot, chat_id, ml)
-
-    except Exception:
-        logger.exception("Error in handle_messages:")
-
+            return
 # ==========================================
 # GLOBAL ERROR HANDLER & MAIN
 # ==========================================
