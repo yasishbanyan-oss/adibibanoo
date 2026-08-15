@@ -196,7 +196,7 @@ def get_persian_date_str():
 _DB_CACHE = None
 _DB_DIRTY = False
 
-DEFAULT_FOODS = [
+DEFAULT FOODS = [
     "قرمه سبزی", "قیمه سیب‌زمینی", "قیمه نثار", "فسنجان", "دیزی / آبگوشت",
     "کباب کوبیده", "جوجه کباب", "شیشلیک", "کباب برگ", "کباب سلطانی",
     "کباب بختیاری", "کباب تابه ای", "ماهی کباب", "چلو گوشت", "زرشک پلو با مرغ",
@@ -1175,7 +1175,7 @@ async def render_group_admin_panel_message(query, chat_id: int):
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 # ==========================================
-# PER-GROUP LOCKS PANEL RENDERING (CUSTOMIZED)
+# PER-GROUP LOCKS PANEL RENDERING (FIXED PAGINATION)
 # ==========================================
 async def render_group_locks_panel(query, chat_id: int, page: int = 1):
     db = load_db()
@@ -1216,12 +1216,18 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
             row.append(btn2)
         buttons.append(row)
 
-    nav_row = [
-        InlineKeyboardButton("◀ صفحه قبل", callback_data=f"panel_group_locks:{chat_id}:1", style="danger"),
-        InlineKeyboardButton("صفحه بعد ▶", callback_data=f"panel_group_locks:{chat_id}:2", style="danger")
-    ]
+    # Dynamic Navigation Row based on Page (Fixes Page 1 & Page 2 display)
+    if page == 1:
+        nav_row = [
+            InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger"),
+            InlineKeyboardButton("صفحه بعد ▶", callback_data=f"panel_group_locks:{chat_id}:2", style="danger")
+        ]
+    else:
+        nav_row = [
+            InlineKeyboardButton("◀ صفحه قبل", callback_data=f"panel_group_locks:{chat_id}:1", style="danger"),
+            InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger")
+        ]
     buttons.append(nav_row)
-    buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger")])
 
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
