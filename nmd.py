@@ -137,6 +137,58 @@ PERSIAN_PERMUTATIONS = {
     '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
 }
 
+WORLD_COUNTRIES = {
+    "ایران": {
+        "tz": "Asia/Tehran",
+        "emoji": '<tg-emoji emoji-id="5271878966347601947">🇮🇷</tg-emoji>'
+    },
+    "آمریکا": {
+        "tz": "America/New_York",
+        "emoji": '<tg-emoji emoji-id="5927292517610426176">🇺🇸</tg-emoji>',
+        "aliases": ["امریکا"]
+    },
+    "آلمان": {
+        "tz": "Europe/Berlin",
+        "emoji": '<tg-emoji emoji-id="5409360418520967565">🇩🇪</tg-emoji>',
+        "aliases": ["المان"]
+    },
+    "انگلیس": {
+        "tz": "Europe/London",
+        "emoji": '<tg-emoji emoji-id="5229192892710402006">🏴󠁧󠁢󠁥󠁮󠁧󠁿</tg-emoji>',
+        "aliases": ["انگلستان"]
+    },
+    "ترکیه": {
+        "tz": "Europe/Istanbul",
+        "emoji": '<tg-emoji emoji-id="5226948110873278599">🇹🇷</tg-emoji>',
+        "aliases": []
+    },
+    "هند": {
+        "tz": "Asia/Kolkata",
+        "emoji": '<tg-emoji emoji-id="6136551252781172945">🇮🇳</tg-emoji>',
+        "aliases": ["هندوستان"]
+    },
+    "عربستان": {
+        "tz": "Asia/Riyadh",
+        "emoji": '<tg-emoji emoji-id="5202079966761590204">🇸🇦</tg-emoji>',
+        "aliases": []
+    },
+    "فرانسه": {
+        "tz": "Europe/Paris",
+        "emoji": '<tg-emoji emoji-id="5931269906434624310">🇫🇷</tg-emoji>',
+        "aliases": []
+    },
+    "چین": {
+        "tz": "Asia/Shanghai",
+        "emoji": '<tg-emoji emoji-id="5431782733376399004">🇨🇳</tg-emoji>',
+        "aliases": []
+    },
+    "ژاپن": {
+        "tz": "Asia/Tokyo",
+        "emoji": '<tg-emoji emoji-id="5456261908069885892">🇯🇵</tg-emoji>',
+        "aliases": []
+    }
+}
+
 # ==========================================
 # LOCK DEFINITIONS & METADATA
 # ==========================================
@@ -3859,7 +3911,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if clean_raw in help_triggers:
             txt = (
                 '<b>سلام عزیزم به ربات من خوش اومدی! <tg-emoji emoji-id="5352750090974929602">😍</tg-emoji></b>\n\n'
-                '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه میمون کوچولو هست آشنا بشی! <tg-emoji emoji-id="5413391520206169048">🐻</tg-emoji></b>'
+                '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه اژدها کوچولو هست آشنا بشی! 🐲</b>'
             )
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun", style="primary", icon_custom_emoji_id="5415940089375106928"),
@@ -3901,13 +3953,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⠃⣠⣳⣟⣿⣿⣷⣿⡿⣜⠄⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⠁⠄⣳⢷⣿⣿⣿⣿⡿ issue⠖⠄⣿⣿⣿⣿⣿\n"
-                "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍ military⢰⣿⣿⣿⣿⣿\n"
+                "⣿⣿⣿⣿⠁⠄⣳⢷⣿⣿⣿⣿⡿⣿⣿⣿ ⣿⣿\n"
+                "⣿⣿⣿⣿⠃⠄⢢⡹⣿⢷⣯⢿⢷⡫⣗⠍⢰⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⡏⢀⢄⠤⣁⠋⠿⣗⣟⡯⡏⢎⠁⢸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⠄⢔⢕⣯⣿⣿⡲⡤⡄⡤⠄⡀⢠⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠇⠠⡳⣯⣿⣿⣾⢵⣫⢎⢎⠆⢀⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢨⣫⣿⣿⡿⣿⣻⢎⡗⡕⡅⢸⣿⣿⣿⣿⣿⣿⣿\n"
-                "⣿⣿⠄笼⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
+                "⣿⣿⠄ ⢾⣾⣿⣿⣟⣗⡪⡳⡀⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠄⢸⢽⣿⣷⣿⣻⡮⡧⡳⡱⡁⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡄⢨⣻⣽⣿⣟⣿⣞⣗⡽⡸⡐⢸⣿⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⡇⢀⢗⣿⣿⣿⣿⡿⣞⡵⡣⣊⢸⣿⣿⣿⣿⣿⣿⣿\n"
@@ -3918,7 +3970,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⣿⣿⣿⣿⡆⠄⢣⣻⣽⣿⣿⣟⣾⡮⡺⡸⠸⣿⣿⣿⣿⣿\n"
                 "⣿⣿⠛⠉⠁⠄⢕⡳⣽⡾⣿⢽⣯⡿⣮⢚⣅⠹⣿⣿⣿\n"
                 "⡿⠋⠄⠄⠄⠄⢀⠒⠝⣞⢿⡿⣿⣽⢿⡽⣧⣳⡅⠌⠻⣿\n"
-                "⠁⠄⠄⠄⠄⠄⠐⡐ screen⠱⡱⣻⡻⣝⣮⣟⣿⣿⣿⣿⣿⣿⣿"
+                "⠁⠄⠄⠄⠄⠄⠐⡐⠱⡱⣻⡻⣝⣮⣟⣿⣿⣿⣿⣿⣿⣿"
             )
             clean_ascii = re.sub(r"[a-zA-Z]+", "", ascii_penis)
             msg1 = await update.message.reply_text(f"<code>{clean_ascii}</code>", parse_mode=ParseMode.HTML)
@@ -4062,33 +4114,28 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --------------------------------------
         # WORLD TIME (GROUP ONLY)
         # --------------------------------------
-        if is_group and norm_text in ["ساعت جهانی", "ساعت"] and features.get("world_time", True):
-            now_tehran = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%H:%M:%S")
-            now_ny = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
-            now_germany = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%H:%M:%S")
-            now_london = datetime.now(ZoneInfo("Europe/London")).strftime("%H:%M:%S")
-            now_istanbul = datetime.now(ZoneInfo("Europe/Istanbul")).strftime("%H:%M:%S")
-            now_mumbai = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
-            now_riyadh = datetime.now(ZoneInfo("Asia/Riyadh")).strftime("%H:%M:%S")
-            now_paris = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
-            now_beijing = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%H:%M:%S")
-            now_tokyo = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M:%S")
+        if is_group and features.get("world_time", True):
+            selected_country = None
+            if norm_text.startswith("ساعت "):
+                target_name = norm_text.replace("ساعت ", "").strip()
+                for c_name, c_data in WORLD_COUNTRIES.items():
+                    if target_name == c_name or target_name in c_data.get("aliases", []):
+                        selected_country = (c_name, c_data)
+                        break
 
-            msg = (
-                '<b><tg-emoji emoji-id="5399898266265475100">🌍</tg-emoji> ساعت جهانی برخی از کشورها :</b>\n\n'
-                f'<b><tg-emoji emoji-id="5271878966347601947">🇮🇷</tg-emoji> ایران: {now_tehran}</b>\n'
-                f'<b><tg-emoji emoji-id="5927292517610426176">🇺🇸</tg-emoji> آمریکا: {now_ny}</b>\n'
-                f'<b><tg-emoji emoji-id="5409360418520967565">🇩🇪</tg-emoji> آلمان: {now_germany}</b>\n'
-                f'<b><tg-emoji emoji-id="5229192892710402006">🏴󠁧󠁢󠁥󠁮󠁧󠁿</tg-emoji> انگلیس: {now_london}</b>\n'
-                f'<b><tg-emoji emoji-id="5226948110873278599">🇹🇷</tg-emoji> ترکیه: {now_istanbul}</b>\n'
-                f'<b><tg-emoji emoji-id="6136551252781172945">🇮🇳</tg-emoji> هند: {now_mumbai}</b>\n'
-                f'<b><tg-emoji emoji-id="5202079966761590204">🇸🇦</tg-emoji> عربستان: {now_riyadh}</b>\n'
-                f'<b><tg-emoji emoji-id="5931269906434624310">🇫🇷</tg-emoji> فرانسه: {now_paris}</b>\n'
-                f'<b><tg-emoji emoji-id="5431782733376399004">🇨🇳</tg-emoji> چین: {now_beijing}</b>\n'
-                f'<b><tg-emoji emoji-id="5456261908069885892">🇯🇵</tg-emoji> ژاپن: {now_tokyo}</b>'
-            )
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+            if selected_country:
+                c_name, c_data = selected_country
+                c_time = datetime.now(ZoneInfo(c_data["tz"])).strftime("%H:%M:%S")
+                msg = f'<b>{c_data["emoji"]} ساعت {c_name}: {c_time}</b>'
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
+            elif norm_text in ["ساعت جهانی", "ساعت"]:
+                lines = ['<b><tg-emoji emoji-id="5399898266265475100">🌍</tg-emoji> ساعت جهانی برخی از کشورها :</b>\n']
+                for c_name, c_data in WORLD_COUNTRIES.items():
+                    c_time = datetime.now(ZoneInfo(c_data["tz"])).strftime("%H:%M:%S")
+                    lines.append(f'<b>{c_data["emoji"]} {c_name}: {c_time}</b>')
+                
+                await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         # --------------------------------------
         # FUN FEATURES WITH PREMIUM EMOJIS & COOLDOWN
         # --------------------------------------
@@ -4350,13 +4397,17 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode=ParseMode.HTML
                     )
 
-        # غذا
+        # غذا با ایموجی‌های پریمیوم و متن عکس بالا
         elif is_group and ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
             g_data = get_group_data(db, chat_id)
             fl = g_data.get("foods", DEFAULT_FOODS)
             if fl:
                 selected_food = random.choice(fl)
-                await update.message.reply_text(f'<b><tg-emoji emoji-id="5418248505447698083">🧽</tg-emoji> ایده غذای گروه: {html.escape(selected_food)}</b>', parse_mode=ParseMode.HTML)
+                msg = (
+                    f'<b><tg-emoji emoji-id="5418248505447698083">🧽</tg-emoji> دنبال غذایی؟ بنظرم بهترین ایده غذا برای تو اینه :</b>\n\n'
+                    f'<b><tg-emoji emoji-id="5357066069250948384">🐱</tg-emoji> | {html.escape(selected_food)}</b>'
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
         # شعر
         elif is_group and norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
