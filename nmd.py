@@ -47,8 +47,24 @@ FIXED_REACTION = "❤️"
 # Custom Emojis
 CHECK_CUSTOM_EMOJI_ID = "5830144944399981619"
 CROSS_CUSTOM_EMOJI_ID = "5819154526816444042"
+CLEANUP_CUSTOM_EMOJI_ID = "5859215993183674044"
 CANDY_CUSTOM_EMOJI_ID = "6046300980436278776"
 PARTY_CUSTOM_EMOJI_ID = "5818785846823755322"
+
+# Navigation & Actions Custom Emojis
+CLOSE_CUSTOM_EMOJI_ID = "5983093054842606366"
+NEXT_CUSTOM_EMOJI_ID = "5843732253829503840"
+PREV_CUSTOM_EMOJI_ID = "5845874566336880660"
+BACK_CUSTOM_EMOJI_ID = "5823664135103061930"
+GEAR_CUSTOM_EMOJI_ID = "5901989641204018165"
+
+# Main Admin Panel Custom Emojis
+PANEL_SCALE_EMOJI_ID = "5825563515670242868"
+PANEL_CASTLE_EMOJI_ID = "5832397371278892338"
+PANEL_HASH_EMOJI_ID = "5902054589699465736"
+LOCK_CUSTOM_EMOJI_ID = "5818736497649524154"
+ADVANCED_CUSTOM_EMOJI_ID = "5819151717907832367"
+LISTS_CUSTOM_EMOJI_ID = "5888937012253171131"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -604,7 +620,12 @@ async def send_media_payload(bot, chat_id: int, payload: dict, reply_to_message_
 async def dispatch_shutdown_message(bot, target_chat_id: int, shutdown_data: dict, reply_to_msg_id: int | None = None):
     if not shutdown_data:
         try:
-            await bot.send_message(chat_id=target_chat_id, text="🔴 ربات در حال حاضر خاموش می‌باشد.", reply_to_message_id=reply_to_msg_id)
+            await bot.send_message(
+                chat_id=target_chat_id,
+                text=f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات در حال حاضر خاموش می‌باشد.</b>',
+                reply_to_message_id=reply_to_msg_id,
+                parse_mode=ParseMode.HTML
+            )
         except Exception:
             pass
         return
@@ -1342,7 +1363,9 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
             await msg.delete()
         except Exception as e:
             logger.debug(f"Failed to delete locked message in {chat.id}: {e}")
-        raise ApplicationHandlerStop()
+        # If deleted message was new_chat_members, do not stop pipeline so welcome handler can run
+        if not bool(msg.new_chat_members):
+            raise ApplicationHandlerStop()
 
 # ==========================================
 # ADMIN & OWNER PANEL LOGIC
@@ -1389,29 +1412,53 @@ async def edit_owner_panel_message(query):
     text, keyboard = get_owner_panel_content(db)
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
-async def render_group_admin_panel_message(query, chat_id: int):
-    db = load_db()
-    g_data = get_group_data(db, chat_id)
-    title = html.escape(g_data.get("title") or "این گروه")
+def build_group_admin_panel_content(chat_id: int, title: str) -> tuple[str, InlineKeyboardMarkup]:
+    esc_title = html.escape(title or "این گروه")
     text = (
-        f"<b>🛠 پنل مدیریت اختصاصی گروه: {title}</b>\n\n"
-        "سلام عزیزم، به پنل مدیریت گروه خوش اومدی! 👋\n\n"
-        "از طریق دکمه‌های زیر می‌تونی تنظیمات ویژه همین گروه را مدیریت کنی."
+        f'<b>به بخش مدیریت گروه خود خوش‌آمدید! <tg-emoji emoji-id="{PANEL_SCALE_EMOJI_ID}">⚖️</tg-emoji></b>\n'
+        f'<b><tg-emoji emoji-id="{PANEL_CASTLE_EMOJI_ID}">🏰</tg-emoji> نام گروه: {esc_title}</b>\n\n'
+        f'<b>- لطفا از طریق دکمه های زیر عملیات مدیریتی خود را انجام دهید! <tg-emoji emoji-id="{PANEL_HASH_EMOJI_ID}">#️⃣</tg-emoji></b>'
     )
     buttons = [
         [
-            InlineKeyboardButton("🔒 قفل ها", callback_data=f"panel_group_locks:{chat_id}:1", style="primary"),
-            InlineKeyboardButton("📋 لیست ها", callback_data=f"panel_group_lists:{chat_id}", style="primary")
+            InlineKeyboardButton("قفل‌ها", callback_data=f"panel_group_locks:{chat_id}:1", style="primary", icon_custom_emoji_id=LOCK_CUSTOM_EMOJI_ID),
+            InlineKeyboardButton("لیست‌ها", callback_data=f"panel_group_lists:{chat_id}", style="primary", icon_custom_emoji_id=LISTS_CUSTOM_EMOJI_ID)
         ],
         [
-            InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data=f"panel_group_advanced:{chat_id}", style="primary")
+            InlineKeyboardButton("تنظیمات پیشرفته", callback_data=f"panel_group_advanced:{chat_id}", style="primary", icon_custom_emoji_id=ADVANCED_CUSTOM_EMOJI_ID)
         ],
         [
-            InlineKeyboardButton("🔙 بستن", callback_data="panel_group_close", style="danger")
+            InlineKeyboardButton("بستن", callback_data="panel_group_close", style="danger", icon_custom_emoji_id=CLOSE_CUSTOM_EMOJI_ID)
         ]
     ]
-    keyboard = InlineKeyboardMarkup(buttons)
+    return text, InlineKeyboardMarkup(buttons)
+
+async def render_group_admin_panel_message(query, chat_id: int):
+    db = load_db()
+    g_data = get_group_data(db, chat_id)
+    text, keyboard = build_group_admin_panel_content(chat_id, g_data.get("title") or "")
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
+        return
+
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    if not await is_admin_or_owner(context, chat_id, user_id):
+        await update.message.reply_text(
+            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما دسترسی مدیریت این گروه را ندارید.</b>',
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    db = load_db()
+    g_data = get_group_data(db, chat_id)
+    text, keyboard = build_group_admin_panel_content(chat_id, g_data.get("title") or "")
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 # ==========================================
 # PER-GROUP LOCKS PANEL RENDERING
@@ -1422,8 +1469,8 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
     locks = g_data.get("locks", {})
 
     text = (
-        f'به بخش قفل گروه خود خوش آمدید! <tg-emoji emoji-id="{CANDY_CUSTOM_EMOJI_ID}">🍭</tg-emoji>\n'
-        'چه عملیاتی انجام می‌دهید؟'
+        f'<b>به بخش قفل گروه خود خوش آمدید! <tg-emoji emoji-id="{CANDY_CUSTOM_EMOJI_ID}">🍭</tg-emoji></b>\n'
+        '<b>چه عملیاتی انجام می‌دهید؟</b>'
     )
 
     page_locks = [k for k, v in ALL_LOCKS.items() if v["page"] == page]
@@ -1439,14 +1486,14 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
             btn1 = InlineKeyboardButton(
                 name1,
                 callback_data=f"panel_service_locks:{chat_id}",
-                style="primary"
+                style=None
             )
         else:
             is_on1 = locks.get(k1, False)
             btn1 = InlineKeyboardButton(
                 name1,
                 callback_data=f"tgl_lock:{chat_id}:{k1}:{page}",
-                style="success" if is_on1 else "primary",
+                style="success" if is_on1 else None,
                 icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on1 else None
             )
         row.append(btn1)
@@ -1459,14 +1506,14 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
                 btn2 = InlineKeyboardButton(
                     name2,
                     callback_data=f"panel_service_locks:{chat_id}",
-                    style="primary"
+                    style=None
                 )
             else:
                 is_on2 = locks.get(k2, False)
                 btn2 = InlineKeyboardButton(
                     name2,
                     callback_data=f"tgl_lock:{chat_id}:{k2}:{page}",
-                    style="success" if is_on2 else "primary",
+                    style="success" if is_on2 else None,
                     icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on2 else None
                 )
             row.append(btn2)
@@ -1474,13 +1521,13 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
 
     if page == 1:
         nav_row = [
-            InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger"),
-            InlineKeyboardButton("صفحه بعد ▶", callback_data=f"panel_group_locks:{chat_id}:2", style="danger")
+            InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID),
+            InlineKeyboardButton("صفحه بعد", callback_data=f"panel_group_locks:{chat_id}:2", style="danger", icon_custom_emoji_id=NEXT_CUSTOM_EMOJI_ID)
         ]
     else:
         nav_row = [
-            InlineKeyboardButton("◀ صفحه قبل", callback_data=f"panel_group_locks:{chat_id}:1", style="danger"),
-            InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger")
+            InlineKeyboardButton("صفحه قبل", callback_data=f"panel_group_locks:{chat_id}:1", style="danger", icon_custom_emoji_id=PREV_CUSTOM_EMOJI_ID),
+            InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)
         ]
     buttons.append(nav_row)
 
@@ -1495,8 +1542,8 @@ async def render_telegram_service_locks_panel(query, chat_id: int):
     locks = g_data.get("locks", {})
 
     text = (
-        f'<b>⚙️ مدیریت قفل سرویس‌های تلگرام</b> <tg-emoji emoji-id="{CANDY_CUSTOM_EMOJI_ID}">🍭</tg-emoji>\n\n'
-        'از گزینه‌های زیر برای روشن یا خاموش کردن حذف پیام‌های سرویس استفاده کنید:'
+        f'<b><tg-emoji emoji-id="{GEAR_CUSTOM_EMOJI_ID}">⚙️</tg-emoji> مدیریت قفل سرویس‌های تلگرام <tg-emoji emoji-id="{CANDY_CUSTOM_EMOJI_ID}">🍭</tg-emoji></b>\n\n'
+        '<b>از گزینه‌های زیر برای روشن یا خاموش کردن حذف پیام‌های سرویس استفاده کنید:</b>'
     )
 
     buttons = []
@@ -1506,12 +1553,12 @@ async def render_telegram_service_locks_panel(query, chat_id: int):
         btn = InlineKeyboardButton(
             name,
             callback_data=f"tgl_srv_lock:{chat_id}:{k}",
-            style="success" if is_on else "primary",
+            style="success" if is_on else None,
             icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID if is_on else None
         )
         buttons.append([btn])
 
-    buttons.append([InlineKeyboardButton("🔙 بازگشت به قفل‌ها", callback_data=f"panel_group_locks:{chat_id}:2", style="danger")])
+    buttons.append([InlineKeyboardButton("بازگشت به قفل‌ها", callback_data=f"panel_group_locks:{chat_id}:2", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)])
 
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
 
@@ -1555,7 +1602,11 @@ async def render_unban_group_picker(query, page: int, db: dict):
 
     if not banned_chats:
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]])
-        await query.message.edit_text("ℹ️ <b>هیچ گروهی در لیست بن قرار ندارد.</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+        await query.message.edit_text(
+            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> هیچ گروهی در لیست بن قرار ندارد.</b>',
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
         return
 
     page_size = 5
@@ -2127,7 +2178,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if invite_link:
             await query.message.reply_text(f"🔗 <b>لینک گروه:</b>\n{invite_link}", parse_mode=ParseMode.HTML)
         else:
-            await query.message.reply_text("❌ ربات دسترسی ساخت لینک در گروه را ندارد یا ذخیره نشده است.")
+            await query.message.reply_text(
+                f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات دسترسی ساخت لینک در گروه را ندارد یا ذخیره نشده است.</b>',
+                parse_mode=ParseMode.HTML
+            )
         await query.answer()
         return
 
@@ -2325,7 +2379,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
         clear_user_all_states(db, user_id, current_chat_id)
-        await query.message.edit_text("🚫 عملیات ارسال همگانی لغو شد.")
+        await query.message.edit_text(
+            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> عملیات ارسال همگانی لغو شد.</b>',
+            parse_mode=ParseMode.HTML
+        )
         return
 
     # GROUP ADMIN ADVANCED
@@ -3007,7 +3064,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
             f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
             f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان: {agrees_text}</b>\n'
-            f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان: {disagrees_text}</b>'
+            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مخالفان: {disagrees_text}</b>'
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -3120,48 +3177,15 @@ async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
 
     if int(user_id) != int(OWNER_ID):
-        await update.message.reply_text("❌ این دستور فقط مخصوص مالک اصلی ربات می‌باشد!")
+        await update.message.reply_text(
+            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> این دستور فقط مخصوص مالک اصلی ربات می‌باشد!</b>',
+            parse_mode=ParseMode.HTML
+        )
         return
     try:
         await send_owner_panel_message(update, context)
     except Exception:
         logger.exception("OWNER PANEL ERROR:")
-
-async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-    if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
-        return
-
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    
-    if not await is_admin_or_owner(context, chat_id, user_id):
-        await update.message.reply_text("❌ شما دسترسی مدیریت این گروه را ندارید.")
-        return
-
-    db = load_db()
-    g_data = get_group_data(db, chat_id)
-    title = html.escape(g_data.get("title") or "این گروه")
-    text = (
-        f"<b>🛠 پنل مدیریت اختصاصی گروه: {title}</b>\n\n"
-        "سلام عزیزم، به پنل مدیریت گروه خوش اومدی! 👋\n\n"
-        "از طریق دکمه‌های زیر می‌تونی تنظیمات گروه رو مدیریت کنی."
-    )
-    buttons = [
-        [
-            InlineKeyboardButton("🔒 قفل ها", callback_data=f"panel_group_locks:{chat_id}:1", style="primary"),
-            InlineKeyboardButton("📋 لیست ها", callback_data=f"panel_group_lists:{chat_id}", style="primary")
-        ],
-        [
-            InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data=f"panel_group_advanced:{chat_id}", style="primary")
-        ],
-        [
-            InlineKeyboardButton("🔙 بستن", callback_data="panel_group_close", style="danger")
-        ]
-    ]
-    keyboard = InlineKeyboardMarkup(buttons)
-    await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 async def command_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -3172,7 +3196,10 @@ async def command_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     cleared = clear_user_all_states(db, user_id, chat_id)
     if cleared:
-        await update.message.reply_text("🚫 تمام عملیات‌های در حال اجرا برای شما به طور کامل لغو گردید.")
+        await update.message.reply_text(
+            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> تمام عملیات‌های در حال اجرا برای شما به طور کامل لغو گردید.</b>',
+            parse_mode=ParseMode.HTML
+        )
     else:
         await update.message.reply_text("ℹ️ شما در هیچ حالت انتظاری قرار ندارید.")
 
@@ -3298,13 +3325,20 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_uid_str = fa_to_en_digits(raw_text.strip())
                     if not target_uid_str.isdigit():
                         kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="cancel_current_flow", style="danger")]])
-                        await update.message.reply_text("❌ لطفاً یک آیدی عددی معتبر ارسال کنید:", reply_markup=kb)
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> لطفاً یک آیدی عددی معتبر ارسال کنید:</b>',
+                            reply_markup=kb,
+                            parse_mode=ParseMode.HTML
+                        )
                         return
 
                     target_uid = int(target_uid_str)
                     if target_uid == int(OWNER_ID):
                         clear_user_all_states(db, user_id, chat_id)
-                        await update.message.reply_text("❌ شما نمی‌توانید مالک اصلی ربات را بن کنید!")
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما نمی‌توانید مالک اصلی ربات را بن کنید!</b>',
+                            parse_mode=ParseMode.HTML
+                        )
                         return
 
                     flow["step"] = "ban_user_reason"
@@ -3388,7 +3422,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     clear_user_all_states(db, user_id, chat_id)
 
                     if target_uid_str not in db.get("global_bans", {}):
-                        await update.message.reply_text("❌ این کاربر بن نیست.")
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> این کاربر بن نیست.</b>',
+                            parse_mode=ParseMode.HTML
+                        )
                     else:
                         del db["global_bans"][target_uid_str]
                         mark_db_dirty()
@@ -3495,7 +3532,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_db(force=True)
                     await update.message.reply_text(f"✅ زمان محدودیت به {mins} دقیقه تغییر یافت.")
                 except Exception:
-                    await update.message.reply_text("❌ مقدار وارد شده نامعتبر است.")
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مقدار وارد شده نامعتبر است.</b>',
+                        parse_mode=ParseMode.HTML
+                    )
                 return
 
             if u_str in db["states"].get("waiting_search_query", {}):
@@ -3558,7 +3598,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif mode in ["poll", "quiz"]:
                     lines = [l.strip() for l in raw_text.strip().split("\n") if l.strip()]
                     if len(lines) < 3:
-                        await update.message.reply_text("❌ حداقل سؤال و ۲ گزینه الزامی است.")
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> حداقل سؤال و ۲ گزینه الزامی است.</b>',
+                            parse_mode=ParseMode.HTML
+                        )
                         return
 
                     question = lines[0]
@@ -3603,7 +3646,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del db["states"]["waiting_user_broadcast_msg"][u_str]
                 payload = extract_media_payload(update.message)
                 if not payload:
-                    await update.message.reply_text("❌ پیامی دریافت نشد.")
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> پیامی دریافت نشد.</b>',
+                        parse_mode=ParseMode.HTML
+                    )
                     return
 
                 started_users = db.get("started_users", {})
@@ -3628,7 +3674,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not is_group:
                 return
             if not await is_admin_or_owner(context, chat_id, user_id):
-                await update.message.reply_text("❌ فقط مدیران گروه دسترسی اجرای این دستور را دارند.")
+                await update.message.reply_text(
+                    f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مدیران گروه دسترسی اجرای این دستور را دارند.</b>',
+                    parse_mode=ParseMode.HTML
+                )
                 return
 
             count_str = match_cleanup.group("count")
@@ -3658,12 +3707,19 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if "message to delete not found" in err_s or "message can't be deleted" in err_s:
                             continue
                         elif "chat_admin_required" in err_s:
-                            await update.message.reply_text("ربات دسترسی حذف پیام‌ها را ندارد.")
+                            await update.message.reply_text(
+                                f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات دسترسی حذف پیام‌ها را ندارد.</b>',
+                                parse_mode=ParseMode.HTML
+                            )
                             return
                         break
 
                 log_admin_action(db, user_id, update.effective_user.full_name, update.effective_chat.title, chat_id, "پاکسازی", f"پاکسازی {deleted_count} پیام اخیر")
-                confirm_msg = await context.bot.send_message(chat_id=chat_id, text=f"<b>پاکسازی {deleted_count} پیام اخیر انجام شد! ✔️</b>", parse_mode=ParseMode.HTML)
+                confirm_msg = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f'<b>پاکسازی {deleted_count} پیام اخیر انجام شد! <tg-emoji emoji-id="{CLEANUP_CUSTOM_EMOJI_ID}">📝</tg-emoji></b>',
+                    parse_mode=ParseMode.HTML
+                )
                 await asyncio.sleep(5)
                 try:
                     await context.bot.delete_message(chat_id=chat_id, message_id=confirm_msg.message_id)
@@ -3722,7 +3778,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not is_group:
                 return
             if not await is_admin_or_owner(context, chat_id, user_id):
-                await update.message.reply_text("❌ فقط مدیران گروه دسترسی اجرای این دستور را دارند.")
+                await update.message.reply_text(
+                    f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مدیران گروه دسترسی اجرای این دستور را دارند.</b>',
+                    parse_mode=ParseMode.HTML
+                )
                 return
 
             if not update.message.reply_to_message:
@@ -3736,7 +3795,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     log_admin_action(db, user_id, update.effective_user.full_name, update.effective_chat.title, chat_id, "پین پیام", f"Message ID: {target_msg_id}")
                     await update.message.reply_text('<b>پیامتو پین کردم عزیزم! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>', parse_mode=ParseMode.HTML)
                 except Exception:
-                    await update.message.reply_text("ربات دسترسی سنجاق کردن پیام‌ها را ندارد.")
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات دسترسی سنجاق کردن پیام‌ها را ندارد.</b>',
+                        parse_mode=ParseMode.HTML
+                    )
                 return
             elif clean_raw in UNPIN_PATTERNS:
                 try:
@@ -3744,7 +3806,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     log_admin_action(db, user_id, update.effective_user.full_name, update.effective_chat.title, chat_id, "آن‌پین پیام", f"Message ID: {target_msg_id}")
                     await update.message.reply_text('<b>پیامو از پین دراوردم رفیق! <tg-emoji emoji-id="5870593825407243361">👋</tg-emoji></b>', parse_mode=ParseMode.HTML)
                 except Exception:
-                    await update.message.reply_text("ربات دسترسی تغییر پیام‌های سنجاق‌شده را ندارد.")
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات دسترسی تغییر پیام‌های سنجاق‌شده را ندارد.</b>',
+                        parse_mode=ParseMode.HTML
+                    )
                 return
 
         # --------------------------------------
@@ -3752,7 +3817,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --------------------------------------
         if is_group and clean_raw in ["کامنت روشن", "گودی کامنت روشن"]:
             if not await is_admin_or_owner(context, chat_id, user_id):
-                await update.message.reply_text("❌ فقط مدیران گروه دسترسی به این دستور را دارند.")
+                await update.message.reply_text(
+                    f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مدیران گروه دسترسی به این دستور را دارند.</b>',
+                    parse_mode=ParseMode.HTML
+                )
                 return
             g_data = get_group_data(db, chat_id)
             c_set = g_data.setdefault("comment", {"enabled": False, "custom": False})
@@ -3803,7 +3871,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     foods.append(food_item)
                     await update.message.reply_text(f"✅ «{food_item}» به منوی این گروه اضافه شد.")
                 else:
-                    await update.message.reply_text("❌ این غذا قبلاً وجود داشته!")
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> این غذا قبلاً وجود داشته!</b>',
+                        parse_mode=ParseMode.HTML
+                    )
                 mark_db_dirty()
                 save_db(force=True)
                 return
@@ -3820,7 +3891,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     rm = foods.pop(target_idx)
                     await update.message.reply_text(f"✅ «{rm}» از لیست این گروه حذف شد.")
                 else:
-                    await update.message.reply_text("❌ این غذا یافت نشد!")
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> این غذا یافت نشد!</b>',
+                        parse_mode=ParseMode.HTML
+                    )
                 mark_db_dirty()
                 save_db(force=True)
                 return
@@ -3960,7 +4034,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not is_group:
                 return
             if not update.message.reply_to_message:
-                await update.message.reply_text("<b>❌ برای ثبت باید روی پیام یک نفر ریپلای کنی!</b>", parse_mode=ParseMode.HTML)
+                await update.message.reply_text(
+                    f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> برای ثبت باید روی پیام یک نفر ریپلای کنی!</b>',
+                    parse_mode=ParseMode.HTML
+                )
                 return
 
             target_uid, target_fname, target_uname, target_mention = resolve_target_user(update, context)
@@ -4226,7 +4303,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f'<b><tg-emoji emoji-id="5830106027701314719">❤️</tg-emoji> دو عدد کفتر عاشقمون این رفقان:</b>\n\n'
                         f'<b><tg-emoji emoji-id="5834477789012564986">💕</tg-emoji> | {name1} <tg-emoji emoji-id="6048558196203720407">❤️</tg-emoji> {name2}</b>\n\n'
                         f'<b><tg-emoji emoji-id="5819032824623144971">➕</tg-emoji>موافقان: هیچکس</b>\n'
-                        f'<b><tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> مخالفان: هیچکس</b>',
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مخالفان: هیچکس</b>',
                         reply_markup=kb,
                         parse_mode=ParseMode.HTML
                     )
@@ -4241,7 +4318,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     }
                     set_cooldown_data(db, chat_id, "ship", {"u1": u1_dict, "u2": u2_dict, "last_msg_id": sent_msg.message_id})
                 else:
-                    await update.message.reply_text('<b>❌ اعضای کافی موجود نیست!</b>', parse_mode=ParseMode.HTML)
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> اعضای کافی موجود نیست!</b>',
+                        parse_mode=ParseMode.HTML
+                    )
 
         # --------------------------------------
         # FOOD & POEM (Group Isolated - GROUP ONLY)
