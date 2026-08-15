@@ -47,6 +47,7 @@ FIXED_REACTION = "❤️"
 # Custom Emojis
 CHECK_CUSTOM_EMOJI_ID = "5830144944399981619"
 CANDY_CUSTOM_EMOJI_ID = "6046300980436278776"
+PARTY_CUSTOM_EMOJI_ID = "5818785846823755322"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -94,6 +95,12 @@ UNPIN_PATTERNS = ["حذف پین", "حذف سنجاق", "آن پین", "ان‌�
 CLEANUP_PATTERN = re.compile(r"^\s*حذف\s+(?P<count>-?\d+|[a-zA-Z]+)?\s*$", re.IGNORECASE)
 FUN_NAMED_PATTERN = re.compile(r"^\s*ناموسی\s+بده(?:\s+(?P<count>\d+))?\s*$", re.IGNORECASE)
 FUN_NORMAL_PATTERN = re.compile(r"^\s*فحش\s+بده(?:\s+(?P<count>\d+))?\s*$", re.IGNORECASE)
+
+# Flexible text lock command regex
+LOCK_COMMAND_PATTERN = re.compile(
+    r"^(?:گودی\s+)?(?:(?:(قفل|ببند|باز\s*کن|حذف\s*قفل|بازکردن\s*قفل)\s+(.+))|(?:(.+?)\s+(رو|را)?\s*(قفل\s*کن|ببند|باز\s*کن)))$",
+    re.IGNORECASE
+)
 
 URL_REGEX = re.compile(r"(https?://\S+|t\.me/\S+|telegram\.me/\S+|www\.\S+)", re.IGNORECASE)
 ENGLISH_CHAR_REGEX = re.compile(r"[a-zA-Z]")
@@ -148,10 +155,10 @@ LOCK_TEXT_ALIASES = {
     "استیکر": "sticker", "استیکرها": "sticker",
     "گیف": "gif", "انیمیشن": "gif",
     "نظرسنجی": "poll", "پل": "poll",
-    "ویس": "voice", "صدا ضبط شده": "voice",
+    "ویس": "voice", "صدا ضبط شده": "voice", "ویسها": "voice",
     "مکان": "location", "لوکیشن": "location", "موقعیت": "location",
     "مخاطب": "contact", "مخاطبین": "contact", "شماره": "contact",
-    "ویرایش پیام": "edit_msg", "ادیت پیام": "edit_msg",
+    "ویرایش پیام": "edit_msg", "ادیت پیام": "edit_msg", "ویرایش": "edit_msg",
     "ویرایش رسانه": "edit_media", "ادیت رسانه": "edit_media", "ویرایش مدیا": "edit_media",
     "فوروارد": "forward", "فروارد": "forward", "بازارسال": "forward",
     "ایموجی": "emoji", "اموجی": "emoji", "شکلک": "emoji",
@@ -477,7 +484,7 @@ async def send_premium_ban_notification(bot, chat_id: int, is_group: bool, durat
 async def send_premium_unban_notification(bot, chat_id: int, is_group: bool = False) -> bool:
     sub = "گروه شما از محدودیت ربات خارج شد." if is_group else "شما از محدودیت ربات خارج شدید."
     html_text = (
-        f'<b>تبریک! </b><tg-emoji emoji-id="5818785846823755322">🎉</tg-emoji>\n\n'
+        f'<b>تبریک! </b><tg-emoji emoji-id="{PARTY_CUSTOM_EMOJI_ID}">🎉</tg-emoji>\n\n'
         f'<b>{sub}</b> <tg-emoji emoji-id="5816739230482701944">✨</tg-emoji>'
     )
     try:
@@ -1216,7 +1223,6 @@ async def render_group_locks_panel(query, chat_id: int, page: int = 1):
             row.append(btn2)
         buttons.append(row)
 
-    # Dynamic Navigation Row based on Page (Fixes Page 1 & Page 2 display)
     if page == 1:
         nav_row = [
             InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{chat_id}", style="danger"),
@@ -1506,7 +1512,9 @@ def build_xo_keyboard(game_id: str, board: list, is_finished: bool = False) -> I
     return InlineKeyboardMarkup(buttons)
 
 async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+    if not update.message or not update.effective_chat:
+        return
+    if update.effective_chat.type not in ["group", "supergroup"]:
         return
     try:
         db = load_db()
@@ -1544,6 +1552,8 @@ async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def dwoz_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
+        return
+    if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
         return
 
     raw_text = update.message.text.strip().lower()
@@ -2078,9 +2088,14 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == "panel_group_close":
         try:
-            await query.message.delete()
+            close_text = f'• پنل با موفقیت بسته شد! <tg-emoji emoji-id="{PARTY_CUSTOM_EMOJI_ID}">🎉</tg-emoji>'
+            await query.message.edit_text(close_text, reply_markup=None, parse_mode=ParseMode.HTML)
         except Exception:
-            pass
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+        await query.answer()
         return
 
     elif data == "panel_user_broadcast":
@@ -2804,6 +2819,9 @@ async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
+    if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
+        return
+
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
@@ -2892,53 +2910,64 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db = load_db()
         await register_member(update, db)
         
-        if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
-            setup_chat_jobs(context.job_queue, [update.effective_chat.id])
+        chat = update.effective_chat
+        is_group = chat and chat.type in ["group", "supergroup"]
+
+        if is_group:
+            setup_chat_jobs(context.job_queue, [chat.id])
 
         user_id = update.effective_user.id
         u_str = str(user_id)
-        chat_id = update.effective_chat.id
-        chat = update.effective_chat
+        chat_id = chat.id if chat else 0
         session_k = get_session_key(user_id, chat_id)
         raw_text = update.message.text or update.message.caption or ""
         clean_raw = raw_text.strip().lower()
         norm_text = normalize_text(raw_text)
 
         # --------------------------------------
-        # TEXT LOCK CONTROL COMMANDS (ADMIN ONLY)
+        # 1. TEXT LOCK CONTROL COMMANDS (ADMIN ONLY - IN GROUP)
         # --------------------------------------
-        if chat and chat.type in ["group", "supergroup"] and await is_admin_or_owner(context, chat_id, user_id):
+        if is_group and await is_admin_or_owner(context, chat_id, user_id):
             clean_cmd = re.sub(r"[!/؟?؛\-_]", "", clean_raw).strip()
+            clean_cmd = re.sub(r"\s+", " ", clean_cmd)
             
-            lock_action = None
-            target_lock_name = None
+            match_lock = LOCK_COMMAND_PATTERN.match(clean_cmd)
+            if match_lock:
+                verb1, target1, target2, _, verb2 = match_lock.groups()
+                action_text = (verb1 or verb2 or "").strip()
+                raw_target = (target1 or target2 or "").strip()
 
-            if clean_cmd.startswith("قفل "):
-                lock_action = True
-                target_lock_name = clean_cmd[4:].strip()
-            elif clean_cmd.startswith("حذف قفل "):
-                lock_action = False
-                target_lock_name = clean_cmd[8:].strip()
-            elif clean_cmd.startswith("بازکردن قفل ") or clean_cmd.startswith("باز کردن قفل "):
-                lock_action = False
-                target_lock_name = clean_cmd.replace("بازکردن قفل ", "").replace("باز کردن قفل ", "").strip()
+                if raw_target.startswith("قفل "):
+                    raw_target = raw_target[4:].strip()
 
-            if lock_action is not None and target_lock_name:
-                lock_key = LOCK_TEXT_ALIASES.get(target_lock_name)
-                if lock_key and lock_key in ALL_LOCKS:
-                    g_data = get_group_data(db, chat_id)
-                    locks = g_data.setdefault("locks", get_default_locks_structure())
-                    locks[lock_key] = lock_action
-                    mark_db_dirty()
-                    save_db(force=True)
+                lock_action = None
+                if action_text in ["قفل", "ببند", "قفل کن"]:
+                    lock_action = True
+                elif action_text in ["باز کن", "بازکن", "حذف قفل", "بازکردن قفل"]:
+                    lock_action = False
 
-                    fa_name = ALL_LOCKS[lock_key]["name"]
-                    action_word = "فعال" if lock_action else "غیرفعال"
-                    log_admin_action(db, user_id, update.effective_user.full_name, chat.title, chat_id, f"دستور متنی قفل {fa_name}", f"وضعیت: {action_word}")
+                if lock_action is not None and raw_target:
+                    lock_key = LOCK_TEXT_ALIASES.get(raw_target)
+                    if not lock_key:
+                        for k, v in ALL_LOCKS.items():
+                            if raw_target == v["name"]:
+                                lock_key = k
+                                break
 
-                    reply_text = f'قفل {fa_name} با موفقیت {action_word} شد! <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
-                    await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML)
-                    return
+                    if lock_key and lock_key in ALL_LOCKS:
+                        g_data = get_group_data(db, chat_id)
+                        locks = g_data.setdefault("locks", get_default_locks_structure())
+                        locks[lock_key] = lock_action
+                        mark_db_dirty()
+                        save_db(force=True)
+
+                        fa_name = ALL_LOCKS[lock_key]["name"]
+                        action_word = "فعال" if lock_action else "غیرفعال"
+                        log_admin_action(db, user_id, update.effective_user.full_name, chat.title, chat_id, f"دستور متنی قفل {fa_name}", f"وضعیت: {action_word}")
+
+                        reply_text = f'قفل {fa_name} با موفقیت {action_word} شد! <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
+                        await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML)
+                        return
 
         # --------------------------------------
         # OWNER FLOWS IN PV / SPECIFIC SESSIONS
@@ -3277,10 +3306,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         # --------------------------------------
-        # HANDLER CLEANUP
+        # HANDLER CLEANUP (GROUP ONLY)
         # --------------------------------------
         match_cleanup = CLEANUP_PATTERN.match(raw_text)
         if match_cleanup:
+            if not is_group:
+                return
             if not await is_admin_or_owner(context, chat_id, user_id):
                 await update.message.reply_text("❌ فقط مدیران گروه دسترسی اجرای این دستور را دارند.")
                 return
@@ -3328,12 +3359,15 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # HANDLER FUN COMMANDS: «ناموسی بده» & «فحش بده»
+        # HANDLER FUN COMMANDS: «ناموسی بده» & «فحش بده» (GROUP ONLY)
         # --------------------------------------
         match_fun_named = FUN_NAMED_PATTERN.match(raw_text)
         match_fun_normal = FUN_NORMAL_PATTERN.match(raw_text)
 
         if match_fun_named or match_fun_normal:
+            if not is_group:
+                return
+
             is_named = bool(match_fun_named)
             match_obj = match_fun_named if is_named else match_fun_normal
             cnt_str = match_obj.group("count")
@@ -3367,9 +3401,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # HANDLER PIN / UNPIN COMMANDS
+        # HANDLER PIN / UNPIN COMMANDS (GROUP ONLY)
         # --------------------------------------
         if clean_raw in PIN_PATTERNS or clean_raw in UNPIN_PATTERNS:
+            if not is_group:
+                return
             if not await is_admin_or_owner(context, chat_id, user_id):
                 await update.message.reply_text("❌ فقط مدیران گروه دسترسی اجرای این دستور را دارند.")
                 return
@@ -3397,9 +3433,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         # --------------------------------------
-        # COMMAND 'کامنت روشن' & 'پنل'
+        # COMMAND 'کامنت روشن' & 'پنل' (GROUP ONLY)
         # --------------------------------------
-        if clean_raw in ["کامنت روشن", "گودی کامنت روشن"]:
+        if is_group and clean_raw in ["کامنت روشن", "گودی کامنت روشن"]:
             if not await is_admin_or_owner(context, chat_id, user_id):
                 await update.message.reply_text("❌ فقط مدیران گروه دسترسی به این دستور را دارند.")
                 return
@@ -3411,7 +3447,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ <b>سیستم کامنت اتوماتیک برای این گروه فعال شد.</b>", parse_mode=ParseMode.HTML)
             return
 
-        if clean_raw in ["پنل", "admin", "/admin"] and await is_admin_or_owner(context, chat_id, user_id):
+        if is_group and clean_raw in ["پنل", "admin", "/admin"] and await is_admin_or_owner(context, chat_id, user_id):
             await command_admin_panel(update, context)
             return
 
@@ -3519,9 +3555,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # REPORT SYSTEM
+        # REPORT SYSTEM (GROUP ONLY)
         # --------------------------------------
-        if clean_raw in ["گزارش", "report"] and update.message.reply_to_message:
+        if is_group and clean_raw in ["گزارش", "report"] and update.message.reply_to_message:
             target_msg = update.message.reply_to_message
             if target_msg.from_user and target_msg.from_user.id == context.bot.id:
                 await update.message.reply_text('<b>منو گزارش میدی؟! <tg-emoji emoji-id="5818704981179505821">🕹</tg-emoji></b>', parse_mode=ParseMode.HTML)
@@ -3542,9 +3578,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # DODOL / FUN RESPONSE
+        # DODOL / FUN RESPONSE (GROUP ONLY)
         # --------------------------------------
-        if DODOL_PATTERN.search(raw_text):
+        if is_group and DODOL_PATTERN.search(raw_text):
             ascii_penis = (
                 "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⢉⢉⢉⢉⠻⣿⣿⣿⣿⣿⣿\n"
                 "⣿⣿⣿⣿⣿⣿⣿⠟⠠⡰⣕⣗⣷⣧⣝⣅⠘⣿⣿⣿⣿⣿\n"
@@ -3574,7 +3610,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # BOT NAME RESPONSES
+        # BOT NAME RESPONSES (GROUP ONLY)
         # --------------------------------------
         is_reply_to_bot = (
             update.message.reply_to_message and 
@@ -3582,21 +3618,21 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.reply_to_message.from_user.id == context.bot.id
         )
 
-        if is_reply_to_bot and (clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد ")):
+        if is_group and is_reply_to_bot and (clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد ")):
             topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").replace("ش", "").replace("ه", "").strip()
             await update.message.reply_text(f'<b>{html.escape(topic)} خودتی! <tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji></b>', parse_mode=ParseMode.HTML)
             return
 
-        if (is_reply_to_bot and clean_raw in ["تو کی هستی", "تو کی هستی؟"]):
+        if is_group and (is_reply_to_bot and clean_raw in ["تو کی هستی", "تو کی هستی؟"]):
             await update.message.reply_text('<b>من گودی هستم خوشگله! <tg-emoji emoji-id="5321415182109401472">😽</tg-emoji></b>', parse_mode=ParseMode.HTML)
             return
 
-        elif clean_raw == "گودی" or (is_reply_to_bot and clean_raw in ["گودی", "گودی؟"]):
+        elif is_group and (clean_raw == "گودی" or (is_reply_to_bot and clean_raw in ["گودی", "گودی؟"])):
             await update.message.reply_text('<b>بله خودم هستم چیکارم دارین؟ <tg-emoji emoji-id="5276088141671846201">🌟</tg-emoji></b>', parse_mode=ParseMode.HTML)
             return
 
         # --------------------------------------
-        # ACTION REGISTRATION
+        # ACTION REGISTRATION (GROUP ONLY)
         # --------------------------------------
         action_type = None
         if any(k in clean_raw for k in ["ثبت گوه خوری", "ثبت گوهخوری"]): action_type = "goh_khori"
@@ -3606,6 +3642,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif any(k in clean_raw for k in ["ثبت جندگی", "ثبت جنده گی"]): action_type = "jendegi"
 
         if action_type:
+            if not is_group:
+                return
             if not update.message.reply_to_message:
                 await update.message.reply_text("<b>❌ برای ثبت باید روی پیام یک نفر ریپلای کنی!</b>", parse_mode=ParseMode.HTML)
                 return
@@ -3659,12 +3697,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         # --------------------------------------
-        # STATS & OVERALL USER STATUS
+        # STATS & OVERALL USER STATUS (GROUP ONLY)
         # --------------------------------------
         is_asking_own_stats = clean_raw in ["آمارم", "آمار من", "وضعیت من"]
         is_asking_other_stats = clean_raw in ["اوضاع این", "اوضاعش", "آمار این", "وضعیت این", "وضعیت"] and update.message.reply_to_message
 
-        if is_asking_own_stats or is_asking_other_stats:
+        if is_group and (is_asking_own_stats or is_asking_other_stats):
             if is_asking_own_stats:
                 target_id = user_id
                 header_str = '<b><tg-emoji emoji-id="5375056987174216702">😏</tg-emoji> آمار شما به شرح ذیل می‌باشد :</b>\n\n'
@@ -3692,9 +3730,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # GENERAL PERCENTAGE
+        # GENERAL PERCENTAGE (GROUP ONLY)
         # --------------------------------------
-        if clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد "):
+        if is_group and (clean_raw.startswith("درصد ") or clean_raw.startswith("این چقدر ") or clean_raw.startswith("این چقد ")):
             target_uid, target_fname, target_uname, target_mention = resolve_target_user(update, context)
             topic = clean_raw.replace("درصد ", "").replace("این چقدر ", "").replace("این چقد ", "").replace(" بودن", "").strip()
             val = random.randint(0, 100)
@@ -3703,9 +3741,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --------------------------------------
-        # WORLD TIME
+        # WORLD TIME (GROUP ONLY)
         # --------------------------------------
-        if norm_text in ["ساعت جهانی", "ساعت"] and features.get("world_time", True):
+        if is_group and norm_text in ["ساعت جهانی", "ساعت"] and features.get("world_time", True):
             now_tehran = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%H:%M:%S")
             now_ny = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
             now_germany = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%H:%M:%S")
@@ -3733,9 +3771,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
         # --------------------------------------
-        # FUN FEATURES
+        # FUN FEATURES (GROUP ONLY)
         # --------------------------------------
-        elif norm_text in ["خوشتیپ کیه", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
+        elif is_group and norm_text in ["خوشتیپ کیه", "خوشتیپ", "خوژتیپ"] and features.get("handsome", True):
             word_label = "خوژتیپ" if "خوژ" in norm_text else "خوشتیپ"
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "handsome")
             if is_cd:
@@ -3751,7 +3789,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     increment_user_stat(db, int(tid), "handsome")
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="5332699109168013117">🌟</tg-emoji> {word_label} گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        elif norm_text in ["جنده کیه", "جنده"] and features.get("jende", True):
+        elif is_group and norm_text in ["جنده کیه", "جنده"] and features.get("jende", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jende")
             if is_cd:
                 m_rem = rem_sec // 60
@@ -3766,7 +3804,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     increment_user_stat(db, int(tid), "jendegi")
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="4974615079971455718">🖤</tg-emoji> جنده گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        elif norm_text in ["کونی کیه", "کونی"] and features.get("koni", True):
+        elif is_group and norm_text in ["کونی کیه", "کونی"] and features.get("koni", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koni")
             if is_cd:
                 m_rem = rem_sec // 60
@@ -3781,7 +3819,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     increment_user_stat(db, int(tid), "koni")
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="4976598744976851674">🍌</tg-emoji> کونی گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        elif norm_text in ["جقی", "جقی کیه"] and features.get("jaghi", True):
+        elif is_group and norm_text in ["جقی", "جقی کیه"] and features.get("jaghi", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jaghi")
             if is_cd:
                 m_rem = rem_sec // 60
@@ -3796,7 +3834,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     increment_user_stat(db, int(tid), "jaghi")
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="4974338329458770518">🍌</tg-emoji> جقی گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        elif norm_text in ["کصخل", "کسخل"] and features.get("koskhal", True):
+        elif is_group and norm_text in ["کصخل", "کسخل"] and features.get("koskhal", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "koskhal")
             if is_cd:
                 m_rem = rem_sec // 60
@@ -3811,7 +3849,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     increment_user_stat(db, int(tid), "kos_khali")
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="5886539179256450622">🤪</tg-emoji> کصخل گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        elif norm_text in ["سکسی", "سکسی گروه"] and features.get("sexy", True):
+        elif is_group and norm_text in ["سکسی", "سکسی گروه"] and features.get("sexy", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "sexy")
             if is_cd:
                 m_rem = rem_sec // 60
@@ -3826,7 +3864,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     increment_user_stat(db, int(tid), "sexy")
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="5920075812911976155">😈</tg-emoji> سکسی گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
-        elif norm_text in ["جذاب", "جذاب گروه"] and features.get("jazab", True):
+        elif is_group and norm_text in ["جذاب", "جذاب گروه"] and features.get("jazab", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "jazab")
             if is_cd:
                 m_rem = rem_sec // 60
@@ -3842,9 +3880,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="5771629206152679502">☕️</tg-emoji> جذاب گروه اینه : {target_mention}</b>', parse_mode=ParseMode.HTML)
 
         # --------------------------------------
-        # COUPLE / SHIP SYSTEM
+        # COUPLE / SHIP SYSTEM (GROUP ONLY)
         # --------------------------------------
-        elif norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
+        elif is_group and norm_text in ["شیپ کن", "شیپ", "کاپل", "کاپل کن"] and features.get("ship", True):
             is_cd, rem_sec, cd_data = get_cooldown_remaining(db, chat_id, "ship")
             if is_cd:
                 m_rem = rem_sec // 60
@@ -3891,16 +3929,16 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text('<b>❌ اعضای کافی موجود نیست!</b>', parse_mode=ParseMode.HTML)
 
         # --------------------------------------
-        # FOOD & POEM (Group Isolated)
+        # FOOD & POEM (Group Isolated - GROUP ONLY)
         # --------------------------------------
-        elif ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
+        elif is_group and ("غذا" in norm_text or "غدا" in norm_text) and features.get("food", True):
             g_data = get_group_data(db, chat_id)
             fl = g_data.get("foods", DEFAULT_FOODS)
             if fl:
                 selected_food = random.choice(fl)
                 await update.message.reply_text(f'<b><tg-emoji emoji-id="5418248505447698083">🧽</tg-emoji> ایده غذای گروه: {html.escape(selected_food)}</b>', parse_mode=ParseMode.HTML)
 
-        elif norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
+        elif is_group and norm_text in ["شعر", "شعر بگو", "شاعر شو"] and features.get("poems", True):
             g_data = get_group_data(db, chat_id)
             custom_names = g_data.get("custom_names", [])
             if custom_names:
@@ -3915,9 +3953,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f'<tg-emoji emoji-id="5859527571586161695">✍️</tg-emoji> <b>{final_poem}</b>', parse_mode=ParseMode.HTML)
 
         # --------------------------------------
-        # LEF DETECTION
+        # LEF DETECTION (GROUP ONLY)
         # --------------------------------------
-        elif LEF_PATTERN.search(raw_text) and features.get("lef", True):
+        elif is_group and LEF_PATTERN.search(raw_text) and features.get("lef", True):
             g_data = get_group_data(db, chat_id)
             ml = g_data.get("media_lef") or db.get("media_lef")
             if ml:
