@@ -20,6 +20,7 @@ from telegram import (
     InlineQueryResultArticle,
     InputTextMessageContent,
     ReactionTypeEmoji,
+    LinkPreviewOptions,
 )
 from telegram.constants import ParseMode, ChatMemberStatus, PollType, MessageEntityType
 from telegram.ext import (
@@ -1241,6 +1242,13 @@ async def get_or_create_group_invite_link(
         if not link:
             logger.error("Invite link API returned no invite_link for chat_id=%s", chat_id)
             return None
+        try:
+            db = load_db()
+            get_group_data(db, chat_id)["invite_link"] = link
+            mark_db_dirty()
+            save_db()
+        except Exception:
+            logger.exception("Failed to persist generated invite link | chat_id=%s", chat_id)
         return link
     except Exception as e:
         logger.exception(
@@ -1257,6 +1265,13 @@ async def get_or_create_group_invite_link(
             if not link:
                 logger.error("export_chat_invite_link returned no link for chat_id=%s", chat_id)
                 return None
+            try:
+                db = load_db()
+                get_group_data(db, chat_id)["invite_link"] = link
+                mark_db_dirty()
+                save_db()
+            except Exception:
+                logger.exception("Failed to persist exported invite link | chat_id=%s", chat_id)
             return link
         except Exception:
             logger.exception("export_chat_invite_link failed | chat_id=%s", chat_id)
@@ -1275,14 +1290,25 @@ def build_link_panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
 def build_link_sub_keyboard(chat_id: int, is_once: bool = False) -> InlineKeyboardMarkup:
     if is_once:
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", icon_custom_emoji_id="6030354793363413800")],
-            [InlineKeyboardButton("بستن", callback_data=f"link_panel:close:{chat_id}", style="danger", icon_custom_emoji_id="5983093054842606366")]
+            [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", style="primary", icon_custom_emoji_id="6030354793363413800")],
+            [InlineKeyboardButton("بازگشت", callback_data=f"link_sub:back:{chat_id}", style="danger", icon_custom_emoji_id="5823664135103061930")]
         ])
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", icon_custom_emoji_id="6030354793363413800")],
-        [InlineKeyboardButton("حذف و ساخت لینک جدید", callback_data=f"link_sub:revoke:{chat_id}", icon_custom_emoji_id="6293870742282965014")],
-        [InlineKeyboardButton("بازگشت", callback_data=f"link_sub:back:{chat_id}", icon_custom_emoji_id="5823664135103061930")]
+        [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", style="primary", icon_custom_emoji_id="6030354793363413800")],
+        [InlineKeyboardButton("حذف و ساخت لینک جدید", callback_data=f"link_sub:revoke:{chat_id}", style="success", icon_custom_emoji_id="6293870742282965014")],
+        [InlineKeyboardButton("بازگشت", callback_data=f"link_sub:back:{chat_id}", style="danger", icon_custom_emoji_id="5823664135103061930")]
     ])
+
+async def get_group_photo_for_send(context: ContextTypes.DEFAULT_TYPE, chat_obj):
+    """Download the actual group photo bytes so Telegram never receives a ChatPhoto object as photo input."""
+    photo = getattr(chat_obj, "photo", None)
+    file_id = getattr(photo, "big_file_id", None) if photo else None
+    if not file_id:
+        return None
+    tg_file = await context.bot.get_file(file_id)
+    data = await tg_file.download_as_bytearray()
+    return bytes(data)
+
 
 async def generate_group_link_text_payload(
     context: ContextTypes.DEFAULT_TYPE,
@@ -2244,6 +2270,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     text_payload,
                     reply_markup=build_link_sub_keyboard(cid, is_once=False),
                     parse_mode=ParseMode.HTML,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
                 await query.answer("✅ لینک آماده شد.")
             except Exception as e:
@@ -2256,10 +2283,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_obj = await context.bot.get_chat(cid)
                 caption_text = await generate_group_link_text_payload(context, cid, is_once=False)
 
-                if chat_obj.photo and chat_obj.photo.big_file_id:
+                photo_bytes = await get_group_photo_for_send(context, chat_obj)
+                if photo_bytes:
                     await context.bot.send_photo(
                         chat_id=cid,
-                        photo=chat_obj.photo.big_file_id,
+                        photo=photo_bytes,
                         caption=caption_text,
                         parse_mode=ParseMode.HTML,
                         reply_to_message_id=query.message.message_id if query.message else None,
@@ -2269,6 +2297,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                         chat_id=cid,
                         text=caption_text,
                         parse_mode=ParseMode.HTML,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
                         reply_to_message_id=query.message.message_id if query.message else None,
                     )
 
@@ -2285,6 +2314,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     text_payload,
                     reply_markup=build_link_sub_keyboard(cid, is_once=True),
                     parse_mode=ParseMode.HTML,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
                 await query.answer("✅ لینک یک‌بارمصرف آماده شد.")
             except Exception as e:
@@ -2301,6 +2331,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     chat_id=user_id,
                     text=text_payload,
                     parse_mode=ParseMode.HTML,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
                 await query.answer("✅ لینک گروه در پیوی شما ارسال شد.", show_alert=True)
             except Exception as e:
@@ -2371,7 +2402,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if decision == "no":
             try:
                 text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
-                await query.message.edit_text(text_payload, reply_markup=build_link_sub_keyboard(cid, is_once=False), parse_mode=ParseMode.HTML)
+                await query.message.edit_text(text_payload, reply_markup=build_link_sub_keyboard(cid, is_once=False), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
                 await query.answer()
             except Exception as e:
                 logger.exception("Failed to cancel link revoke | chat_id=%s", cid)
@@ -2380,26 +2411,34 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         if decision == "yes":
             try:
-                links = await context.bot.get_chat_export_invite_links(cid)
-                revoked = 0
-                for link_obj in links:
-                    try:
-                        await context.bot.revoke_chat_invite_link(cid, link_obj.invite_link)
-                        revoked += 1
-                    except Exception:
-                        logger.exception("Failed to revoke invite link | chat_id=%s | link=%s", cid, getattr(link_obj, "invite_link", "?"))
+                db = load_db()
+                g_data = get_group_data(db, cid)
+                current_link = g_data.get("invite_link")
+
+                # The Bot API has no get_chat_export_invite_links() method.
+                # Revoke the exact invite link that this bot last generated/stored.
+                if not current_link:
+                    current_link = await context.bot.export_chat_invite_link(cid)
+
+                if not current_link:
+                    raise RuntimeError("لینک فعالی برای حذف پیدا نشد.")
+
+                await context.bot.revoke_chat_invite_link(cid, current_link)
+                g_data["invite_link"] = None
+                mark_db_dirty()
+                save_db()
 
                 success_text = (
-                    f'<tg-emoji emoji-id="5830144944399981619">✅</tg-emoji> '
-                    f'<b>{revoked} لینک حذف شد. برای ساخت لینک جدید از دکمه زیر استفاده کنید.</b>'
+                    '<tg-emoji emoji-id="5830144944399981619">✅</tg-emoji> '
+                    '<b>لینک قبلی با موفقیت حذف شد. برای ساخت لینک جدید از دکمه زیر استفاده کنید.</b>'
                 )
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("💠 ساخت لینک جدید", callback_data=f"link_panel:text:{cid}", icon_custom_emoji_id="5983093054842606366")]
                 ])
-                await query.message.edit_text(success_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-                await query.answer("✅ لینک‌ها حذف شدند.")
+                await query.message.edit_text(success_text, reply_markup=kb, parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
+                await query.answer("✅ لینک حذف شد.")
             except Exception as e:
-                logger.exception("Failed to revoke group invite links | chat_id=%s", cid)
+                logger.exception("Failed to revoke group invite link | chat_id=%s", cid)
                 await query.answer(f"❌ حذف لینک ناموفق بود: {str(e)[:150]}", show_alert=True)
             return
 
@@ -3967,10 +4006,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     chat_obj = await context.bot.get_chat(chat_id)
                     caption_text = await generate_group_link_text_payload(context, chat_id, is_once=False)
-                    if chat_obj.photo and chat_obj.photo.big_file_id:
-                        await context.bot.send_photo(chat_id=chat_id, photo=chat_obj.photo.big_file_id, caption=caption_text, parse_mode=ParseMode.HTML)
+                    photo_bytes = await get_group_photo_for_send(context, chat_obj)
+                    if photo_bytes:
+                        await context.bot.send_photo(chat_id=chat_id, photo=photo_bytes, caption=caption_text, parse_mode=ParseMode.HTML)
                     else:
-                        await update.message.reply_text(caption_text, parse_mode=ParseMode.HTML)
+                        await update.message.reply_text(caption_text, parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
                 except Exception as e:
                     logger.exception("Link photo command failed | chat_id=%s | user_id=%s", chat_id, user_id)
                     await update.message.reply_text(f"❌ دریافت لینک بصورت عکس ناموفق بود: {str(e)[:150]}", parse_mode=ParseMode.HTML)
@@ -3979,7 +4019,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif "یک‌بار" in cmd_lower or "یکبار" in cmd_lower:
                 try:
                     text_payload = await generate_group_link_text_payload(context, chat_id, is_once=True)
-                    await update.message.reply_text(text_payload, reply_markup=build_link_sub_keyboard(chat_id, is_once=True), parse_mode=ParseMode.HTML)
+                    await update.message.reply_text(text_payload, reply_markup=build_link_sub_keyboard(chat_id, is_once=True), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
                 except Exception as e:
                     logger.exception("One-time link command failed | chat_id=%s | user_id=%s", chat_id, user_id)
                     await update.message.reply_text(f"❌ ساخت لینک یک‌بارمصرف ناموفق بود: {str(e)[:150]}", parse_mode=ParseMode.HTML)
@@ -3988,7 +4028,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif "پیوی" in cmd_lower or "در پیوی" in cmd_lower:
                 try:
                     text_payload = await generate_group_link_text_payload(context, chat_id, is_once=False)
-                    await context.bot.send_message(chat_id=user_id, text=text_payload, parse_mode=ParseMode.HTML)
+                    await context.bot.send_message(chat_id=user_id, text=text_payload, parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
                     await update.message.reply_text("✅ لینک گروه با موفقیت در پیوی شما ارسال شد.", parse_mode=ParseMode.HTML)
                 except Exception as e:
                     logger.exception("Link PV command failed | group=%s | user=%s", chat_id, user_id)
