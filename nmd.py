@@ -2004,6 +2004,10 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
         )
     ]
     await update.inline_query.answer(results, cache_time=0, is_personal=True)
+
+def get_advanced_status_text(db: dict, chat_id: int) -> str:
+    base_text = "🗂 <b>تنظیمات پیشرفته :</b>\n\n- عملیات مدیریتی خود را از طریق دکمه‌های زیر انجام دهید."
+    return base_text  
 # ==========================================
 # CALLBACK QUERY HANDLER
 # ==========================================
@@ -2591,15 +2595,45 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
+        
+        text = get_advanced_status_text(db, cid)
         buttons = [
-            [InlineKeyboardButton("👋 پیام خوش‌آمدگویی", callback_data=f"panel_welcome:{cid}", style="primary")],
-            [InlineKeyboardButton("💬 کامنت کانال", callback_data=f"panel_comment:{cid}", style="primary")],
-            [InlineKeyboardButton("🍽 مدیریت غذاها", callback_data=f"panel_foods:{cid}", style="primary")],
-            [InlineKeyboardButton("📜 اسامی شعرها", callback_data=f"panel_poem_names:{cid}", style="primary")],
-            [InlineKeyboardButton("➕ افزودن شعر جدید", callback_data=f"panel_add_poem:{cid}", style="success")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{cid}", style="primary")]
+            [
+                InlineKeyboardButton("تایید هویت", callback_data=f"advanced_identity:{cid}", style="primary", icon_custom_emoji_id="5231012545799666522"),
+                InlineKeyboardButton("ضد خیانت", callback_data=f"advanced_anti_betrayal:{cid}", style="primary", icon_custom_emoji_id="5872792857252733333")
+            ],
+            [
+                InlineKeyboardButton("عضویت اجباری", callback_data=f"advanced_forced_membership:{cid}", style="primary", icon_custom_emoji_id="6084584811379299518"),
+                InlineKeyboardButton("خوش آمد", callback_data=f"advanced_welcome:{cid}", style="primary", icon_custom_emoji_id="5443038326535759644")
+            ],
+            [
+                InlineKeyboardButton("تنظیم اخطار", callback_data=f"advanced_warnings:{cid}", style="primary", icon_custom_emoji_id="5420323339723881652"),
+                InlineKeyboardButton("سخت‌گیرانه", callback_data=f"advanced_strict:{cid}", style="primary", icon_custom_emoji_id="5825563515670242868")
+            ],
+            [
+                InlineKeyboardButton("ضد تبچی", callback_data=f"advanced_anti_cheat:{cid}", style="primary", icon_custom_emoji_id="5856986522904959860"),
+                InlineKeyboardButton("پیام‌ رگباری", callback_data=f"advanced_burst_messages:{cid}", style="primary", icon_custom_emoji_id="5859215993183674044")
+            ],
+            [
+                InlineKeyboardButton("قفل خودکار", callback_data=f"advanced_auto_lock:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"),
+                InlineKeyboardButton("اختیارات گروه", callback_data=f"advanced_group_permissions:{cid}", style="primary", icon_custom_emoji_id="5901989641204018165")
+            ],
+            [
+                InlineKeyboardButton("پاکسازی گروه", callback_data=f"advanced_cleanup:{cid}", style="primary", icon_custom_emoji_id="5458382591121964689"),
+                InlineKeyboardButton("قفل امکانات", callback_data=f"advanced_feature_locks:{cid}", style="primary", icon_custom_emoji_id="5296369303661067030")
+            ],
+            [
+                InlineKeyboardButton("خداحافظی", callback_data=f"advanced_goodbye:{cid}", style="primary", icon_custom_emoji_id="5904279000506704761")
+            ],
+            [
+                InlineKeyboardButton("💠 بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id="5983093054842606366")
+            ]
         ]
-        await query.message.edit_text("<b>⚙️ تنظیمات پیشرفته گروه:</b>\n\nلطفاً گزینه مورد نظر را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return
+
+    elif data.startswith("advanced_"):
+        await query.answer("COMING SOON...!", show_alert=True)
         return
 
     elif data.startswith("panel_group_lists:"):
