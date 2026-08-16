@@ -1289,7 +1289,7 @@ def build_link_panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     ])
 
 def build_link_sub_keyboard(chat_id: int, is_once: bool = False, invite_link: str | None = None) -> InlineKeyboardMarkup:
-    share_url = f"https://t.me/share/url?url={quote(invite_link, safe="")}" if invite_link else None
+    share_url = f"https://t.me/share/url?url={quote(invite_link, safe='')}" if invite_link else None
     share_button = (
         InlineKeyboardButton("اشتراک‌گذاری", url=share_url, style="primary", icon_custom_emoji_id="6030354793363413800")
         if share_url else
