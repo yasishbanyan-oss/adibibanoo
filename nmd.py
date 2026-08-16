@@ -22,6 +22,7 @@ from telegram import (
     ReactionTypeEmoji,
 )
 from telegram.constants import ParseMode, ChatMemberStatus, PollType, MessageEntityType
+from telegram.error import Forbidden, BadRequest, TelegramError
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -1207,29 +1208,129 @@ LINK_COMMAND_PATTERN = re.compile(
 )
 
 async def check_bot_admin_and_link_rights(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> bool:
+    """Check that the bot is an administrator and can invite users."""
     try:
         bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
         if bot_member.status != ChatMemberStatus.ADMINISTRATOR:
+            logger.warning("Link system: bot is not administrator in chat %s (status=%s)", chat_id, bot_member.status)
             return False
-        if not getattr(bot_member, "can_invite_users", True):
+
+        # Telegram can return False when the administrator does not have invite permission.
+        can_invite = getattr(bot_member, "can_invite_users", None)
+        if can_invite is False:
+            logger.warning("Link system: bot has no can_invite_users permission in chat %s", chat_id)
             return False
+
         return True
+    except TelegramError:
+        logger.exception("Link system: failed to inspect bot permissions in chat %s", chat_id)
+        return False
     except Exception:
+        logger.exception("Link system: unexpected permission-check error in chat %s", chat_id)
         return False
 
-async def get_or_create_group_invite_link(context: ContextTypes.DEFAULT_TYPE, chat_id: int, expire_date: int = None, member_limit: int = None) -> str | None:
+
+async def get_or_create_group_invite_link(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    expire_date: int = None,
+    member_limit: int = None,
+) -> str | None:
+    """Create a real invite link.
+
+    For one-time links we NEVER fall back to export_chat_invite_link because
+    that would silently turn a limited/expiring link into a normal link.
+    """
+    is_limited_link = expire_date is not None or member_limit is not None
+
     try:
-        link_obj = await context.bot.create_chat_invite_link(
-            chat_id=chat_id,
-            expire_date=expire_date,
-            member_limit=member_limit
-        )
-        return link_obj.invite_link
+        kwargs = {"chat_id": chat_id}
+        if expire_date is not None:
+            kwargs["expire_date"] = expire_date
+        if member_limit is not None:
+            kwargs["member_limit"] = member_limit
+
+        link_obj = await context.bot.create_chat_invite_link(**kwargs)
+        invite_link = getattr(link_obj, "invite_link", None)
+        if invite_link:
+            logger.info(
+                "Link system: invite link created successfully for chat %s (limited=%s)",
+                chat_id, is_limited_link
+            )
+            return invite_link
+
+        logger.error("Link system: Telegram returned no invite_link for chat %s", chat_id)
+    except Forbidden:
+        logger.exception("Link system: Telegram Forbidden while creating invite link for chat %s", chat_id)
+    except BadRequest:
+        logger.exception("Link system: Telegram BadRequest while creating invite link for chat %s", chat_id)
+    except TelegramError:
+        logger.exception("Link system: TelegramError while creating invite link for chat %s", chat_id)
     except Exception:
-        try:
-            return await context.bot.export_chat_invite_link(chat_id)
-        except Exception:
-            return None
+        logger.exception("Link system: unexpected error while creating invite link for chat %s", chat_id)
+
+    # export_chat_invite_link can only provide a normal primary/export link.
+    # Never use it for one-time/member-limited links.
+    if is_limited_link:
+        return None
+
+    try:
+        exported = await context.bot.export_chat_invite_link(chat_id)
+        if exported:
+            logger.info("Link system: exported fallback invite link for chat %s", chat_id)
+            return exported
+        logger.error("Link system: export_chat_invite_link returned an empty value for chat %s", chat_id)
+    except Forbidden:
+        logger.exception("Link system: Telegram Forbidden while exporting invite link for chat %s", chat_id)
+    except BadRequest:
+        logger.exception("Link system: Telegram BadRequest while exporting invite link for chat %s", chat_id)
+    except TelegramError:
+        logger.exception("Link system: TelegramError while exporting invite link for chat %s", chat_id)
+    except Exception:
+        logger.exception("Link system: unexpected error while exporting invite link for chat %s", chat_id)
+
+    return None
+
+
+async def generate_group_link_text_payload(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    is_once: bool = False,
+) -> str:
+    """Build the link message and fail loudly so callers can show the real error."""
+    chat_obj = await context.bot.get_chat(chat_id)
+    title = html.escape(chat_obj.title or "گروه")
+    member_count = await context.bot.get_chat_member_count(chat_id)
+
+    if is_once:
+        import time
+        expire_ts = int(time.time()) + 86400
+        link = await get_or_create_group_invite_link(
+            context, chat_id, expire_date=expire_ts, member_limit=1
+        )
+        if not link:
+            raise RuntimeError("Could not create a one-time invite link")
+
+        return (
+            f'<tg-emoji emoji-id="6008070651900861977">📤</tg-emoji> <b>لینک یک‌بار مصرف شما آماده است.</b>\n\n'
+            f'<tg-emoji emoji-id="5803420768826038185">🔘</tg-emoji> <b>نام گروه :</b> {title}\n'
+            f'<tg-emoji emoji-id="5802963792895678011">⚫️</tg-emoji> <b>تعداد عضو :</b> {member_count}\n'
+            f'<tg-emoji emoji-id="5803057229909202251">♻️</tg-emoji> <b>تاریخ انقضا لینک :</b> 24 ساعت\n'
+            f'<tg-emoji emoji-id="5803351177470940363">🗣</tg-emoji> <b>افراد مجاز :</b> 1\n\n'
+            f'<tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji>\n\n'
+            f'<tg-emoji emoji-id="6032888897082497570">📤</tg-emoji> <b>لینک گروه :</b>\n\n- {link}'
+        )
+
+    link = await get_or_create_group_invite_link(context, chat_id)
+    if not link:
+        raise RuntimeError("Could not create/export a group invite link")
+
+    return (
+        f'<tg-emoji emoji-id="5803420768826038185">🔘</tg-emoji> <b>نام گروه :</b> {title}\n'
+        f'<tg-emoji emoji-id="5802963792895678011">⚫️</tg-emoji> <b>تعداد عضو :</b> {member_count}\n\n'
+        f'<tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji>\n\n'
+        f'<tg-emoji emoji-id="6032888897082497570">📤</tg-emoji> <b>لینک گروه :</b>\n\n- {link}'
+    )
 
 def build_link_panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -2170,51 +2271,138 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     session_k = get_session_key(user_id, current_chat_id)
 
     # اول از همه بررسی دکمه‌های لینک تا سریعاً واکنش نشان دهند
-    if data.startswith("link_panel:"):
-        parts = data.split(":")
-        action = parts[1]
-        cid = int(parts[2])
-        if not await is_admin_or_owner(context, cid, user_id):
-            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        if action == "close":
-            try:
-                await query.message.edit_text(
-                    "<b>پنل دریافت لینک با موفقیت بسته شد.</b>", 
-                    reply_markup=None, 
-                    parse_mode=ParseMode.HTML
+    if data and data.startswith("link_panel:"):
+        try:
+            parts = data.split(":", 2)
+            if len(parts) != 3:
+                await query.answer("❌ داده دکمه نامعتبر است.", show_alert=True)
+                return
+
+            action = parts[1]
+            cid = int(parts[2])
+
+            if not await is_admin_or_owner(context, cid, user_id):
+                await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+                return
+
+            if action == "close":
+                try:
+                    await query.message.edit_text(
+                        "<b>پنل دریافت لینک با موفقیت بسته شد.</b>",
+                        reply_markup=None,
+                        parse_mode=ParseMode.HTML,
+                    )
+                    await query.answer("✅ بسته شد")
+                except Exception:
+                    logger.exception("Link system: failed to close panel in chat %s", cid)
+                    await query.answer("❌ بستن پنل انجام نشد.", show_alert=True)
+                return
+
+            if action not in {"text", "photo", "once", "pv"}:
+                await query.answer("❌ گزینه لینک نامعتبر است.", show_alert=True)
+                return
+
+            if not await check_bot_admin_and_link_rights(context, cid):
+                await query.answer(
+                    "❌ ربات ادمین نیست یا دسترسی دعوت کاربران ندارد.",
+                    show_alert=True,
                 )
-            except Exception:
-                pass
-            await query.answer()
-            return
-        if action == "text":
-            text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
-            await query.message.edit_text(text_payload, reply_markup=build_link_sub_keyboard(cid, is_once=False), parse_mode=ParseMode.HTML)
-            return
-        elif action == "photo":
-            try:
-                chat_obj = await context.bot.get_chat(cid)
-                caption_text = await generate_group_link_text_payload(context, cid, is_once=False)
-                await query.message.delete()
-                if chat_obj.photo and chat_obj.photo.big_file_id:
-                    await context.bot.send_photo(chat_id=cid, photo=chat_obj.photo.big_file_id, caption=caption_text, parse_mode=ParseMode.HTML)
+                return
+
+            if action == "text":
+                try:
+                    text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
+                    await query.message.edit_text(
+                        text_payload,
+                        reply_markup=build_link_sub_keyboard(cid, is_once=False),
+                        parse_mode=ParseMode.HTML,
+                    )
+                    await query.answer("✅ لینک آماده شد")
+                except Exception:
+                    logger.exception("Link system: text callback failed for chat %s", cid)
+                    await query.answer("❌ ساخت لینک انجام نشد. لاگ سرور را بررسی کنید.", show_alert=True)
+                return
+
+            if action == "once":
+                try:
+                    text_payload = await generate_group_link_text_payload(context, cid, is_once=True)
+                    await query.message.edit_text(
+                        text_payload,
+                        reply_markup=build_link_sub_keyboard(cid, is_once=True),
+                        parse_mode=ParseMode.HTML,
+                    )
+                    await query.answer("✅ لینک یک‌بار مصرف ساخته شد")
+                except Exception:
+                    logger.exception("Link system: one-time callback failed for chat %s", cid)
+                    await query.answer("❌ ساخت لینک یک‌بار مصرف انجام نشد.", show_alert=True)
+                return
+
+            if action == "pv":
+                try:
+                    text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
+                except Exception:
+                    logger.exception("Link system: failed to generate PV link for chat %s", cid)
+                    await query.answer("❌ ساخت لینک گروه انجام نشد.", show_alert=True)
+                    return
+
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=text_payload,
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Forbidden:
+                    logger.exception("Link system: user %s has not started the bot / blocked it", user_id)
+                    await query.answer(
+                        "❌ ارسال به پیوی ممکن نیست. ربات را در پیوی /start کنید.",
+                        show_alert=True,
+                    )
+                except TelegramError:
+                    logger.exception("Link system: Telegram error sending PV link to user %s", user_id)
+                    await query.answer("❌ تلگرام اجازه ارسال لینک به پیوی را نداد.", show_alert=True)
+                except Exception:
+                    logger.exception("Link system: unexpected PV send error for user %s", user_id)
+                    await query.answer("❌ خطای غیرمنتظره در ارسال به پیوی.", show_alert=True)
                 else:
-                    await context.bot.send_message(chat_id=cid, text=caption_text, parse_mode=ParseMode.HTML)
+                    await query.answer("✅ لینک گروه در پیوی شما ارسال شد.", show_alert=True)
+                return
+
+            if action == "photo":
+                try:
+                    chat_obj = await context.bot.get_chat(cid)
+                    caption_text = await generate_group_link_text_payload(context, cid, is_once=False)
+
+                    if chat_obj.photo and chat_obj.photo.big_file_id:
+                        await context.bot.send_photo(
+                            chat_id=cid,
+                            photo=chat_obj.photo.big_file_id,
+                            caption=caption_text,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    else:
+                        await context.bot.send_message(
+                            chat_id=cid,
+                            text=caption_text,
+                            parse_mode=ParseMode.HTML,
+                        )
+
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        logger.warning("Link system: could not delete old link panel in chat %s", cid, exc_info=True)
+
+                    await query.answer("✅ لینک بصورت عکس ارسال شد")
+                except Exception:
+                    logger.exception("Link system: photo callback failed for chat %s", cid)
+                    await query.answer("❌ ارسال لینک بصورت عکس انجام نشد.", show_alert=True)
+                return
+
+        except Exception:
+            logger.exception("Link system: invalid/failed link_panel callback data=%r", data)
+            try:
+                await query.answer("❌ خطا در پردازش دکمه لینک.", show_alert=True)
             except Exception:
                 pass
-            return
-        elif action == "once":
-            text_payload = await generate_group_link_text_payload(context, cid, is_once=True)
-            await query.message.edit_text(text_payload, reply_markup=build_link_sub_keyboard(cid, is_once=True), parse_mode=ParseMode.HTML)
-            return
-        elif action == "pv":
-            try:
-                text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
-                await context.bot.send_message(chat_id=user_id, text=text_payload, parse_mode=ParseMode.HTML)
-                await query.answer("✅ لینک گروه در پیوی شما ارسال شد.", show_alert=True)
-            except Exception:
-                await query.answer("❌ خطا در ارسال به پیوی (ربات را استارت کنید).", show_alert=True)
             return
 
     elif data.startswith("link_sub:"):
@@ -2229,7 +2417,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
         elif sub_action == "back":
             panel_text = f'<tg-emoji emoji-id="6044084382174552276">📊</tg-emoji> <b>نوع لینک را انتخاب کنید:</b>'
-            await query.message.edit_text(panel_text, reply_markup=build_link_panel_keyboard(cid), parse_mode=ParseMode.HTML)
+            try:
+                await query.message.edit_text(panel_text, reply_markup=build_link_panel_keyboard(cid), parse_mode=ParseMode.HTML)
+                await query.answer("↩️ برگشت")
+            except Exception:
+                logger.exception("Link system: failed to return to link panel for chat %s", cid)
+                await query.answer("❌ بازگشت انجام نشد.", show_alert=True)
             return
         elif sub_action == "revoke":
             kb = InlineKeyboardMarkup([
