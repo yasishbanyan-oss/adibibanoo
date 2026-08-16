@@ -1233,23 +1233,23 @@ async def get_or_create_group_invite_link(context: ContextTypes.DEFAULT_TYPE, ch
 
 def build_link_panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🗳 دریافت لینک بصورت متن", callback_data=f"link_panel:text:{chat_id}", style="default", icon_custom_emoji_id="5942921379614565429")],
-        [InlineKeyboardButton("🗳 دریافت لینک بصورت عکس", callback_data=f"link_panel:photo:{chat_id}", style="default", icon_custom_emoji_id="5942921379614565429")],
-        [InlineKeyboardButton("🗳 دریافت لینک یک‌بار مصرف", callback_data=f"link_panel:once:{chat_id}", style="default", icon_custom_emoji_id="5942921379614565429")],
-        [InlineKeyboardButton("🗳 دریافت لینک در پیوی", callback_data=f"link_panel:pv:{chat_id}", style="default", icon_custom_emoji_id="5942921379614565429")],
-        [InlineKeyboardButton("💠 بستن", callback_data=f"link_panel:close:{chat_id}", style="danger", icon_custom_emoji_id="5983093054842606366")]
+        [InlineKeyboardButton("دریافت لینک بصورت متن", callback_data=f"link_panel:text:{chat_id}", icon_custom_emoji_id="5942921379614565429")],
+        [InlineKeyboardButton("دریافت لینک بصورت عکس", callback_data=f"link_panel:photo:{chat_id}", icon_custom_emoji_id="5942921379614565429")],
+        [InlineKeyboardButton("دریافت لینک یک‌بار مصرف", callback_data=f"link_panel:once:{chat_id}", icon_custom_emoji_id="5942921379614565429")],
+        [InlineKeyboardButton("دریافت لینک در پیوی", callback_data=f"link_panel:pv:{chat_id}", icon_custom_emoji_id="5942921379614565429")],
+        [InlineKeyboardButton("بستن", callback_data=f"link_panel:close:{chat_id}", icon_custom_emoji_id="5983093054842606366")]
     ])
 
 def build_link_sub_keyboard(chat_id: int, is_once: bool = False) -> InlineKeyboardMarkup:
     if is_once:
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", style="primary", icon_custom_emoji_id="6030354793363413800")],
-            [InlineKeyboardButton("💠 بستن", callback_data=f"link_panel:close:{chat_id}", style="danger", icon_custom_emoji_id="5983093054842606366")]
+            [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", icon_custom_emoji_id="6030354793363413800")],
+            [InlineKeyboardButton("بستن", callback_data=f"link_panel:close:{chat_id}", icon_custom_emoji_id="5983093054842606366")]
         ])
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", style="primary", icon_custom_emoji_id="6030354793363413800")],
-        [InlineKeyboardButton("🤍 حذف و ساخت لینک جدید", callback_data=f"link_sub:revoke:{chat_id}", style="default", icon_custom_emoji_id="6293870742282965014")],
-        [InlineKeyboardButton("⬅️ بازگشت", callback_data=f"link_sub:back:{chat_id}", style="danger", icon_custom_emoji_id="5823664135103061930")]
+        [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", icon_custom_emoji_id="6030354793363413800")],
+        [InlineKeyboardButton("حذف و ساخت لینک جدید", callback_data=f"link_sub:revoke:{chat_id}", icon_custom_emoji_id="6293870742282965014")],
+        [InlineKeyboardButton("بازگشت", callback_data=f"link_sub:back:{chat_id}", icon_custom_emoji_id="5823664135103061930")]
     ])
 
 async def generate_group_link_text_payload(context: ContextTypes.DEFAULT_TYPE, chat_id: int, is_once: bool = False) -> str:
@@ -2169,12 +2169,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     db = load_db()
     session_k = get_session_key(user_id, current_chat_id)
 
-    if data.startswith("help_"):
-        await query.answer("Coming soon..!", show_alert=True)
-        return
-
-    # LINK PANEL & ACTIONS CALLBACKS
-    elif data.startswith("link_panel:"):
+    # اول از همه بررسی دکمه‌های لینک تا سریعاً واکنش نشان دهند
+    if data.startswith("link_panel:"):
         parts = data.split(":")
         action = parts[1]
         cid = int(parts[2])
@@ -2182,8 +2178,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
         if action == "close":
-            try: await query.message.delete()
-            except Exception: pass
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
             await query.answer()
             return
         if action == "text":
@@ -2199,7 +2197,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     await context.bot.send_photo(chat_id=cid, photo=chat_obj.photo.big_file_id, caption=caption_text, parse_mode=ParseMode.HTML)
                 else:
                     await context.bot.send_message(chat_id=cid, text=caption_text, parse_mode=ParseMode.HTML)
-            except Exception: pass
+            except Exception:
+                pass
             return
         elif action == "once":
             text_payload = await generate_group_link_text_payload(context, cid, is_once=True)
@@ -2221,14 +2220,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-        if sub_action == "back":
+        if sub_action == "share":
+            await query.answer("لینک گروه آماده اشتراک‌گذاری است.", show_alert=False)
+            return
+        elif sub_action == "back":
             panel_text = f'<tg-emoji emoji-id="6044084382174552276">📊</tg-emoji> <b>نوع لینک را انتخاب کنید:</b>'
             await query.message.edit_text(panel_text, reply_markup=build_link_panel_keyboard(cid), parse_mode=ParseMode.HTML)
             return
         elif sub_action == "revoke":
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ بله", callback_data=f"link_revoke:yes:{cid}", style="success", icon_custom_emoji_id="5830144944399981619"),
-                 InlineKeyboardButton("❌ خیر", callback_data=f"link_revoke:no:{cid}", style="danger", icon_custom_emoji_id="5819154526816444042")]
+                [InlineKeyboardButton("✅ بله", callback_data=f"link_revoke:yes:{cid}", icon_custom_emoji_id="5830144944399981619"),
+                 InlineKeyboardButton("❌ خیر", callback_data=f"link_revoke:no:{cid}", icon_custom_emoji_id="5819154526816444042")]
             ])
             await query.message.edit_text("<b>از حذف لینک نهایت اطمینان را دارید؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
             return
@@ -2248,15 +2250,22 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 links = await context.bot.get_chat_export_invite_links(cid)
                 for l in links:
-                    try: await context.bot.revoke_chat_invite_link(cid, l.invite_link)
-                    except Exception: pass
-            except Exception: pass
+                    try:
+                        await context.bot.revoke_chat_invite_link(cid, l.invite_link)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             success_text = f'<tg-emoji emoji-id="5830144944399981619">✅</tg-emoji> <b>لینک شما با موفقیت حذف و با لینک جدید جایگزین شد.</b>'
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💠 بازگشت", callback_data=f"link_panel:text:{cid}", style="danger", icon_custom_emoji_id="5983093054842606366")]
+                [InlineKeyboardButton("💠 بازگشت", callback_data=f"link_panel:text:{cid}", icon_custom_emoji_id="5983093054842606366")]
             ])
             await query.message.edit_text(success_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-            return    
+            return
+
+    if data.startswith("help_"):
+        await query.answer("Coming soon..!", show_alert=True)
+        return
 
     # LOCKS PANEL NAVIGATION & TOGGLE
     elif data.startswith("panel_group_locks:"):
@@ -3655,7 +3664,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     await query.answer()
-
 # ==========================================
 # COMMAND HANDLERS
 # ==========================================
