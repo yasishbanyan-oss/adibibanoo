@@ -2380,8 +2380,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
         elif sub_action == "revoke":
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ بله", callback_data=f"link_revoke:yes:{cid}", style="success", icon_custom_emoji_id="5830144944399981619"),
-                 InlineKeyboardButton("❌ خیر", callback_data=f"link_revoke:no:{cid}", style="danger", icon_custom_emoji_id="5819154526816444042")]
+                [InlineKeyboardButton("بله", callback_data=f"link_revoke:yes:{cid}", style="success", icon_custom_emoji_id="5830144944399981619"),
+                 InlineKeyboardButton("خیر", callback_data=f"link_revoke:no:{cid}", style="danger", icon_custom_emoji_id="5819154526816444042")]
             ])
             try:
                 await query.message.edit_text("<b>از حذف لینک نهایت اطمینان را دارید؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -2440,7 +2440,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     '<b>لینک قبلی با موفقیت حذف شد. برای ساخت لینک جدید از دکمه زیر استفاده کنید.</b>'
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💠 ساخت لینک جدید", callback_data=f"link_panel:text:{cid}", icon_custom_emoji_id="5983093054842606366")]
+                    [InlineKeyboardButton("ساخت لینک جدید", callback_data=f"link_panel:text:{cid}", icon_custom_emoji_id="5983093054842606366")]
                 ])
                 await query.message.edit_text(success_text, reply_markup=kb, parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
                 await query.answer("✅ لینک حذف شد.")
@@ -3994,14 +3994,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_group and LINK_COMMAND_PATTERN.match(raw_text):
             if not await is_admin_or_owner(context, chat_id, user_id):
                 await update.message.reply_text(
-                    f'😐 <b>تو که ادمین نیستی! اجازه ندارم بهت لینک بدم.</b> <tg-emoji emoji-id="5276508228128103199">😐</tg-emoji>',
+                    f'<b>تو که ادمین نیستی! اجازه ندارم بهت لینک بدم.</b> <tg-emoji emoji-id="5276508228128103199">😐</tg-emoji>',
                     parse_mode=ParseMode.HTML
                 )
                 return
 
             if not await check_bot_admin_and_link_rights(context, chat_id):
                 await update.message.reply_text(
-                    f'😔 <b>متاسفم! من ادمین گروه نیستم یا دسترسی به لینک ندارم.</b>\n'
+                    f'<b>متاسفم! من ادمین گروه نیستم یا دسترسی به لینک ندارم.</b>\n'
                     f'<b>لطفا به یکی از ادمین‌ها بگو مشکل رو حل کنن!</b> <tg-emoji emoji-id="5274171963487576924">🌟</tg-emoji>',
                     parse_mode=ParseMode.HTML
                 )
