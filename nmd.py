@@ -2769,7 +2769,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         return
 
-        elif data == "owner_list_poems":
+    elif data == "owner_list_poems":
         if int(user_id) != int(OWNER_ID):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
@@ -2783,7 +2783,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 text += f"{idx}. {clean_p}\n"
         buttons = [[InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-        return
+        return    
 
     elif data == "owner_list_foods":
         if int(user_id) != int(OWNER_ID):
