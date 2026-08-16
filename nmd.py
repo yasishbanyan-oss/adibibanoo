@@ -1237,14 +1237,14 @@ def build_link_panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("دریافت لینک بصورت عکس", callback_data=f"link_panel:photo:{chat_id}", icon_custom_emoji_id="5942921379614565429")],
         [InlineKeyboardButton("دریافت لینک یک‌بار مصرف", callback_data=f"link_panel:once:{chat_id}", icon_custom_emoji_id="5942921379614565429")],
         [InlineKeyboardButton("دریافت لینک در پیوی", callback_data=f"link_panel:pv:{chat_id}", icon_custom_emoji_id="5942921379614565429")],
-        [InlineKeyboardButton("بستن", callback_data=f"link_panel:close:{chat_id}", icon_custom_emoji_id="5983093054842606366")]
+        [InlineKeyboardButton("بستن", callback_data=f"link_panel:close:{chat_id}", style="danger", icon_custom_emoji_id="5983093054842606366")]
     ])
 
 def build_link_sub_keyboard(chat_id: int, is_once: bool = False) -> InlineKeyboardMarkup:
     if is_once:
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", icon_custom_emoji_id="6030354793363413800")],
-            [InlineKeyboardButton("بستن", callback_data=f"link_panel:close:{chat_id}", icon_custom_emoji_id="5983093054842606366")]
+            [InlineKeyboardButton("بستن", callback_data=f"link_panel:close:{chat_id}", style="danger", icon_custom_emoji_id="5983093054842606366")]
         ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", icon_custom_emoji_id="6030354793363413800")],
@@ -2179,7 +2179,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
         if action == "close":
             try:
-                await query.message.delete()
+                await query.message.edit_text(
+                    "<b>پنل دریافت لینک با موفقیت بسته شد.</b>", 
+                    reply_markup=None, 
+                    parse_mode=ParseMode.HTML
+                )
             except Exception:
                 pass
             await query.answer()
