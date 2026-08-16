@@ -11,6 +11,7 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from telegram import (
@@ -1287,14 +1288,20 @@ def build_link_panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("بستن", callback_data=f"link_panel:close:{chat_id}", style="danger", icon_custom_emoji_id="5983093054842606366")]
     ])
 
-def build_link_sub_keyboard(chat_id: int, is_once: bool = False) -> InlineKeyboardMarkup:
+def build_link_sub_keyboard(chat_id: int, is_once: bool = False, invite_link: str | None = None) -> InlineKeyboardMarkup:
+    share_url = f"https://t.me/share/url?url={quote(invite_link, safe="")}" if invite_link else None
+    share_button = (
+        InlineKeyboardButton("اشتراک‌گذاری", url=share_url, style="primary", icon_custom_emoji_id="6030354793363413800")
+        if share_url else
+        InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", style="primary", icon_custom_emoji_id="6030354793363413800")
+    )
     if is_once:
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", style="primary", icon_custom_emoji_id="6030354793363413800")],
+            [share_button],
             [InlineKeyboardButton("بازگشت", callback_data=f"link_sub:back:{chat_id}", style="danger", icon_custom_emoji_id="5823664135103061930")]
         ])
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", style="primary", icon_custom_emoji_id="6030354793363413800")],
+        [share_button],
         [InlineKeyboardButton("حذف و ساخت لینک جدید", callback_data=f"link_sub:revoke:{chat_id}", style="success", icon_custom_emoji_id="6293870742282965014")],
         [InlineKeyboardButton("بازگشت", callback_data=f"link_sub:back:{chat_id}", style="danger", icon_custom_emoji_id="5823664135103061930")]
     ])
@@ -2268,7 +2275,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
                 await query.message.edit_text(
                     text_payload,
-                    reply_markup=build_link_sub_keyboard(cid, is_once=False),
+                    reply_markup=build_link_sub_keyboard(cid, is_once=False, invite_link=load_db().get("groups", {}).get(str(cid), {}).get("invite_link")),
                     parse_mode=ParseMode.HTML,
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
@@ -2312,7 +2319,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 text_payload = await generate_group_link_text_payload(context, cid, is_once=True)
                 await query.message.edit_text(
                     text_payload,
-                    reply_markup=build_link_sub_keyboard(cid, is_once=True),
+                    reply_markup=build_link_sub_keyboard(cid, is_once=True, invite_link=load_db().get("groups", {}).get(str(cid), {}).get("invite_link")),
                     parse_mode=ParseMode.HTML,
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
@@ -2373,8 +2380,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
         elif sub_action == "revoke":
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ بله", callback_data=f"link_revoke:yes:{cid}", icon_custom_emoji_id="5830144944399981619"),
-                 InlineKeyboardButton("❌ خیر", callback_data=f"link_revoke:no:{cid}", icon_custom_emoji_id="5819154526816444042")]
+                [InlineKeyboardButton("✅ بله", callback_data=f"link_revoke:yes:{cid}", style="success", icon_custom_emoji_id="5830144944399981619"),
+                 InlineKeyboardButton("❌ خیر", callback_data=f"link_revoke:no:{cid}", style="danger", icon_custom_emoji_id="5819154526816444042")]
             ])
             try:
                 await query.message.edit_text("<b>از حذف لینک نهایت اطمینان را دارید؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -2402,7 +2409,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if decision == "no":
             try:
                 text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
-                await query.message.edit_text(text_payload, reply_markup=build_link_sub_keyboard(cid, is_once=False), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
+                await query.message.edit_text(text_payload, reply_markup=build_link_sub_keyboard(cid, is_once=False, invite_link=load_db().get("groups", {}).get(str(cid), {}).get("invite_link")), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
                 await query.answer()
             except Exception as e:
                 logger.exception("Failed to cancel link revoke | chat_id=%s", cid)
@@ -4019,7 +4026,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif "یک‌بار" in cmd_lower or "یکبار" in cmd_lower:
                 try:
                     text_payload = await generate_group_link_text_payload(context, chat_id, is_once=True)
-                    await update.message.reply_text(text_payload, reply_markup=build_link_sub_keyboard(chat_id, is_once=True), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
+                    await update.message.reply_text(text_payload, reply_markup=build_link_sub_keyboard(chat_id, is_once=True, invite_link=load_db().get("groups", {}).get(str(chat_id), {}).get("invite_link")), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))
                 except Exception as e:
                     logger.exception("One-time link command failed | chat_id=%s | user_id=%s", chat_id, user_id)
                     await update.message.reply_text(f"❌ ساخت لینک یک‌بارمصرف ناموفق بود: {str(e)[:150]}", parse_mode=ParseMode.HTML)
