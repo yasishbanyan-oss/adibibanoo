@@ -1889,9 +1889,12 @@ async def dwoz_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 # WHISPER (INLINE NAJVA) SYSTEM
 # ==========================================
 async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.inline_query.query.strip()
-    user = update.inline_query.from_user
+    query_obj = update.inline_query
+    logger.info(f"Received Inline Query from {query_obj.from_user.id}: '{query_obj.query}'")
     
+    query = query_obj.query.strip()
+    user = query_obj.from_user
+       
     if not query:
         help_text = (
             '🔗 <tg-emoji emoji-id="6084584811379299518">🔗</tg-emoji> <b>آموزش نجوا در ربات گودی!</b>\n\n'
@@ -4705,8 +4708,10 @@ def main():
     # Chat Member Tracking for bot itself
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    # Inline Query Handler for Whisper (MUST be before general handlers)
+    # --- این بخش را دقیقاً اینجا قرار بده ---
+    # Inline Query Handler for Whisper
     app.add_handler(InlineQueryHandler(handle_inline_whisper))
+    # --------------------------------------
 
     # General callback & command handlers
     app.add_handler(CallbackQueryHandler(handle_callback_query))
