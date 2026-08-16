@@ -1390,6 +1390,14 @@ def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
             InlineKeyboardButton("😈 تنظیم فحش ناموسی", callback_data="owner_fun_named", style="danger"),
             InlineKeyboardButton("😂 تنظیم فحش عادی", callback_data="owner_fun_normal", style="primary")
         ],
+        [
+            InlineKeyboardButton("📢 شعارهای سراسری", callback_data="owner_list_poems", style="primary"),
+            InlineKeyboardButton("🍽 غذاهای سراسری", callback_data="owner_list_foods", style="primary")
+        ],
+        [
+            InlineKeyboardButton("➕ افزودن شعر جدید", callback_data="owner_add_poem", style="success"),
+            InlineKeyboardButton("➕ افزودن غذا", callback_data="owner_add_food", style="success")
+        ],
         [InlineKeyboardButton(f"📋 مشخصات گروه‌ها ({group_count})", callback_data="panel_owner_groups_1", style="primary")],
         [InlineKeyboardButton("⏱ زمان محدودیت (Cooldown)", callback_data="panel_cooldown", style="primary")],
         [InlineKeyboardButton("⚙ مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
@@ -2006,8 +2014,61 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
     await update.inline_query.answer(results, cache_time=0, is_personal=True)
 
 def get_advanced_status_text(db: dict, chat_id: int) -> str:
-    base_text = "🗂 <b>تنظیمات پیشرفته :</b>\n\n- عملیات مدیریتی خود را از طریق دکمه‌های زیر انجام دهید."
-    return base_text  
+    base_text = '<tg-emoji emoji-id="5765170391383286478">🗂</tg-emoji> <b>تنظیمات پیشرفته :</b>\n\n- عملیات مدیریتی خود را از طریق دکمه‌های زیر انجام دهید.'
+    return base_text
+
+async def build_group_lists_status(context: ContextTypes.DEFAULT_TYPE, chat_id: int, db: dict, g_data: dict) -> str:
+    # مالکین
+    owners_count = 1  # مالک ربات/گروه به عنوان پیش‌فرض
+    
+    # مدیران (تلاش برای گرفتن تعداد ادمین‌ها از API تلگرام)
+    admins_count = 0
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        admins_count = len(admins)
+    except Exception:
+        admins_count = 0
+
+    # اعضای ویژه
+    special_members_count = len(g_data.get("special_members", []))
+
+    # سکوت‌شده‌ها (Mute)
+    muted_count = len(g_data.get("muted_users", []))
+
+    # بن‌شده‌ها
+    banned_count = len(db.get("global_group_bans", {}))
+
+    # اخطار گرفتگان
+    warned_count = len(g_data.get("warned_users", []))
+
+    # معاف شدگان (Exempt)
+    exempt_count = len(g_data.get("exempt_users", []))
+
+    # کلمات فیلتر
+    filter_words_count = len(g_data.get("filter_words", []))
+
+    # کامنت‌گذاری
+    comment_enabled = g_data.get("comment", {}).get("enabled", False)
+    comment_status_str = "فعال" if comment_enabled else "غیرفعال"
+
+    # لیست پاسخ (پاسخ‌دهی خودکار)
+    auto_responses_count = len(g_data.get("auto_responses", []))
+
+    text = (
+        '<tg-emoji emoji-id="5803057229909202251">♻️</tg-emoji> <b>بخش لیست ها :</b>\n\n'
+        f'   ├<tg-emoji emoji-id="5803378592247190638">⚡️</tg-emoji> <b>مالکین : {owners_count}</b>\n'
+        f'   ├<tg-emoji emoji-id="5983208078361761545">⚡️</tg-emoji> <b>مدیران : {admins_count}</b>\n'
+        f'   ├<tg-emoji emoji-id="5803224441575970112">💼</tg-emoji> <b>ویژه ها : {special_members_count}</b>\n'
+        f'   ├<tg-emoji emoji-id="5983227268275638287">💠</tg-emoji> <b>سکوت شدگان : {muted_count}</b>\n'
+        f'   ├<tg-emoji emoji-id="5802963792895678011">⚫️</tg-emoji> <b>بن شدگان : {banned_count}</b>\n'
+        f'   ├<tg-emoji emoji-id="5803420768826038185">🔘</tg-emoji> <b>اخطار گرفتگان : {warned_count}</b>\n'
+        f'   ├<tg-emoji emoji-id="5803257186406634805">🖤</tg-emoji> <b>معاف شدگان : {exempt_count}</b>\n'
+        f'   ├<tg-emoji emoji-id="5866017773976555711">⚫️</tg-emoji> <b>کلمات فیلتر : {filter_words_count}</b>\n'
+        f'   ├<tg-emoji emoji-id="5981132367912243320">🟢</tg-emoji> <b>کامنت‌گذاری : {comment_status_str}</b>\n'
+        f'   ├<tg-emoji emoji-id="5980891235563343409">🤖</tg-emoji> <b>لیست پاسخ : {auto_responses_count}</b>\n'
+        '~ ~ ~ ~ ~ ~ ~ ~ ~ ~'
+    )
+    return text   
 # ==========================================
 # CALLBACK QUERY HANDLER
 # ==========================================
@@ -2626,7 +2687,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 InlineKeyboardButton("خداحافظی", callback_data=f"advanced_goodbye:{cid}", style="primary", icon_custom_emoji_id="5904279000506704761")
             ],
             [
-                InlineKeyboardButton("💠 بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id="5983093054842606366")
+                InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id="5983093054842606366")
             ]
         ]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
@@ -2641,13 +2702,41 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
+        
+        g_data = get_group_data(db, cid)
+        text = await build_group_lists_status(context, cid, db, g_data)
+        
         buttons = [
-            [InlineKeyboardButton("📢 شعارها", callback_data=f"panel_list_poems:{cid}", style="primary")],
-            [InlineKeyboardButton("🍽 لیست غذاها", callback_data=f"panel_list_foods:{cid}", style="primary")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_main:{cid}", style="primary")]
+            [
+                InlineKeyboardButton("مالکین", callback_data=f"list_owners:{cid}", style="primary", icon_custom_emoji_id="6060078591276749279"),
+                InlineKeyboardButton("مدیران", callback_data=f"list_admins:{cid}", style="primary", icon_custom_emoji_id="6057831537401925660")
+            ],
+            [
+                InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"),
+                InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")
+            ],
+            [
+                InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"),
+                InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")
+            ],
+            [
+                InlineKeyboardButton("لیست معاف", callback_data=f"list_exempt:{cid}", style="primary", icon_custom_emoji_id="5884078304729767721"),
+                InlineKeyboardButton("لیست اخطار", callback_data=f"list_warns:{cid}", style="primary", icon_custom_emoji_id="5911318301580991657")
+            ],
+            [
+                InlineKeyboardButton("پاسخ‌دهی خودکار", callback_data=f"list_auto_resp:{cid}", style="primary", icon_custom_emoji_id="5859316800361077930"),
+                InlineKeyboardButton("کامنت‌گذاری", callback_data=f"list_comments:{cid}", style="primary", icon_custom_emoji_id="5908745251098473369")
+            ],
+            [
+                InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id="5983093054842606366")
+            ]
         ]
-        await query.message.edit_text("<b>📋 لیست‌های قابل مدیریت گروه:</b>", reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         return
+
+    elif data.startswith(("list_owners:", "list_admins:", "list_special:", "list_filters:", "list_muted:", "list_banned:", "list_exempt:", "list_warns:", "list_auto_resp:", "list_comments:")):
+        await query.answer("COMING SOON...!", show_alert=True)
+        return    
 
     elif data.startswith("panel_list_poems:"):
         cid = int(data.replace("panel_list_poems:", ""))
@@ -2678,6 +2767,54 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         text = "🍽 <b>لیست غذاهای ذخیره‌شده گروه:</b>\n\n" + ", ".join(foods)
         buttons = [[InlineKeyboardButton("🔙 بازگشت", callback_data=f"panel_group_lists:{cid}", style="primary")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return
+
+        elif data == "owner_list_poems":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        poems_list = db.get("global_poems", DEFAULT_POEMS)
+        if not poems_list:
+            text = "📭 <b>هنوز شعری ثبت نشده است.</b>"
+        else:
+            text = "📢 <b>لیست شعارهای سراسری ربات:</b>\n\n"
+            for idx, p in enumerate(poems_list, 1):
+                clean_p = html.escape(p).replace("{name}", "نام‌کاربر")
+                text += f"{idx}. {clean_p}\n"
+        buttons = [[InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return
+
+    elif data == "owner_list_foods":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        foods = db.get("global_foods", DEFAULT_FOODS)
+        text = "🍽 <b>لیست غذاهای سراسری ربات:</b>\n\n" + ", ".join(foods)
+        buttons = [[InlineKeyboardButton("🔙 بازگشت", callback_data="panel_owner_main", style="primary")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return
+
+    elif data == "owner_add_poem":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        db["states"]["waiting_owner_add_poem"] = {str(user_id): current_chat_id}
+        mark_db_dirty()
+        save_db()
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="cancel_current_flow", style="danger")]])
+        await query.message.edit_text("➕ شعر جدید سراسری را با استفاده از <code>{name}</code> یا <code>یوزرنیم</code> بفرستید:", reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+
+    elif data == "owner_add_food":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True, style="danger")
+            return
+        db["states"]["waiting_owner_add_food"] = {str(user_id): current_chat_id}
+        mark_db_dirty()
+        save_db()
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="cancel_current_flow", style="danger")]])
+        await query.message.edit_text("➕ نام غذای جدید سراسری که می‌خواهید اضافه شود را بنویسید:", reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
     elif data == "panel_group_close":
@@ -3755,6 +3892,31 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode=ParseMode.HTML
                     )
                 return
+            
+            if u_str in db["states"].get("waiting_owner_add_poem", {}):
+                del db["states"]["waiting_owner_add_poem"][u_str]
+                if raw_text and not raw_text.startswith("/"):
+                    poem_item = raw_text.strip().replace("یوزرنیم", "{name}")
+                    p_list = db.setdefault("global_poems", list(DEFAULT_POEMS))
+                    p_list.append(poem_item)
+                    mark_db_dirty()
+                    save_db(force=True)
+                    await update.message.reply_text("✅ شعر جدید سراسری با موفقیت اضافه شد.")
+                    return
+
+            if u_str in db["states"].get("waiting_owner_add_food", {}):
+                del db["states"]["waiting_owner_add_food"][u_str]
+                if raw_text and not raw_text.startswith("/"):
+                    food_item = raw_text.strip()
+                    foods = db.setdefault("global_foods", list(DEFAULT_FOODS))
+                    if food_item.lower() not in [f.strip().lower() for f in foods]:
+                        foods.append(food_item)
+                        mark_db_dirty()
+                        save_db(force=True)
+                        await update.message.reply_text(f"✅ «{food_item}» به منوی سراسری غذاها اضافه شد.")
+                    else:
+                        await update.message.reply_text("❌ این غذا از قبل در لیست وجود داشته است.")
+                    return
 
             if u_str in db["states"].get("waiting_search_query", {}):
                 target_cid = db["states"]["waiting_search_query"][u_str]
