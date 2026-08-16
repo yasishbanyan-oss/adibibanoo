@@ -1192,6 +1192,95 @@ def setup_chat_jobs(job_queue, active_chats: list):
         if not job_queue.get_jobs_by_name(job_name_rx):
             job_queue.run_repeating(periodic_group_reaction_job, interval=300, first=300, chat_id=chat_id, name=job_name_rx)
 
+# ==========================================
+# GROUP LINK SYSTEM HELPERS
+# ==========================================
+LINK_COMMAND_PATTERN = re.compile(
+    r"^(?:گودی\s+)?("
+    r"لینک|دریافت\s+لینک|لینک\s+بده|گودی\s+لینک|گودی\s+لینک\s+بده|گودی\s+لینک\s+بگیر|گودی\s+لینک\s+بفرست|"
+    r"گودی\s+لینک\s+عادی\s+بده|لینک\s+عادی|لینک\s+عادی\s+بگیر|لینک\s+عادی\s+بده|"
+    r"لینک\s+یک‌بار\s+مصرف|لینک\s+یکبار\s+مصرف|لینک\s+یک‌بار\s+مصرف\s+بده|لینک\s+یکبار\s+مصرف\s+بده|گودی\s+لینک\s+یک‌بار\s+مصرف\s+بده|"
+    r"لینک\s+پیوی|لینک\s+پیوی\s+بده|لینک\s+رو\s+پیوی\s+بفرست|لینک\s+در\s+پیوی|"
+    r"لینک\s+عکس|لینک\s+به\s+صورت\s+عکس|لینک\s+عکس\s+بده|لینک\s+رو\s+عکس\s+بفرست"
+    r")$",
+    re.IGNORECASE
+)
+
+async def check_bot_admin_and_link_rights(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> bool:
+    try:
+        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        if bot_member.status != ChatMemberStatus.ADMINISTRATOR:
+            return False
+        if not getattr(bot_member, "can_invite_users", True):
+            return False
+        return True
+    except Exception:
+        return False
+
+async def get_or_create_group_invite_link(context: ContextTypes.DEFAULT_TYPE, chat_id: int, expire_date: int = None, member_limit: int = None) -> str | None:
+    try:
+        link_obj = await context.bot.create_chat_invite_link(
+            chat_id=chat_id,
+            expire_date=expire_date,
+            member_limit=member_limit
+        )
+        return link_obj.invite_link
+    except Exception:
+        try:
+            return await context.bot.export_chat_invite_link(chat_id)
+        except Exception:
+            return None
+
+def build_link_panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗳 دریافت لینک بصورت متن", callback_data=f"link_panel:text:{chat_id}", style="default", icon_custom_emoji_id="5942921379614565429")],
+        [InlineKeyboardButton("🗳 دریافت لینک بصورت عکس", callback_data=f"link_panel:photo:{chat_id}", style="default", icon_custom_emoji_id="5942921379614565429")],
+        [InlineKeyboardButton("🗳 دریافت لینک یک‌بار مصرف", callback_data=f"link_panel:once:{chat_id}", style="default", icon_custom_emoji_id="5942921379614565429")],
+        [InlineKeyboardButton("🗳 دریافت لینک در پیوی", callback_data=f"link_panel:pv:{chat_id}", style="default", icon_custom_emoji_id="5942921379614565429")],
+        [InlineKeyboardButton("💠 بستن", callback_data=f"link_panel:close:{chat_id}", style="danger", icon_custom_emoji_id="5983093054842606366")]
+    ])
+
+def build_link_sub_keyboard(chat_id: int, is_once: bool = False) -> InlineKeyboardMarkup:
+    if is_once:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", style="primary", icon_custom_emoji_id="6030354793363413800")],
+            [InlineKeyboardButton("💠 بستن", callback_data=f"link_panel:close:{chat_id}", style="danger", icon_custom_emoji_id="5983093054842606366")]
+        ])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ اشتراک‌گذاری", callback_data=f"link_sub:share:{chat_id}", style="primary", icon_custom_emoji_id="6030354793363413800")],
+        [InlineKeyboardButton("🤍 حذف و ساخت لینک جدید", callback_data=f"link_sub:revoke:{chat_id}", style="default", icon_custom_emoji_id="6293870742282965014")],
+        [InlineKeyboardButton("⬅️ بازگشت", callback_data=f"link_sub:back:{chat_id}", style="danger", icon_custom_emoji_id="5823664135103061930")]
+    ])
+
+async def generate_group_link_text_payload(context: ContextTypes.DEFAULT_TYPE, chat_id: int, is_once: bool = False) -> str:
+    chat_obj = await context.bot.get_chat(chat_id)
+    title = html.escape(chat_obj.title or "گروه")
+    member_count = await context.bot.get_chat_member_count(chat_id)
+    
+    if is_once:
+        import time
+        expire_ts = int(time.time()) + 86400
+        link = await get_or_create_group_invite_link(context, chat_id, expire_date=expire_ts, member_limit=1)
+        link_str = link or "خطا در ساخت لینک"
+        return (
+            f'<tg-emoji emoji-id="6008070651900861977">📤</tg-emoji> <b>لینک یک‌بار مصرف شما آماده است.</b>\n\n'
+            f'<tg-emoji emoji-id="5803420768826038185">🔘</tg-emoji> <b>نام گروه :</b> {title}\n'
+            f'<tg-emoji emoji-id="5802963792895678011">⚫️</tg-emoji> <b>تعداد عضو :</b> {member_count}\n'
+            f'<tg-emoji emoji-id="5803057229909202251">♻️</tg-emoji> <b>تاریخ انقضا لینک :</b> 24 ساعت\n'
+            f'<tg-emoji emoji-id="5803351177470940363">🗣</tg-emoji> <b>افراد مجاز :</b> 1\n\n'
+            f'<tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗\n\n'
+            f'<tg-emoji emoji-id="6032888897082497570">📤</tg-emoji> <b>لینک گروه :</b>\n\n- {link_str}'
+        )
+    else:
+        link = await get_or_create_group_invite_link(context, chat_id)
+        link_str = link or "خطا در ساخت لینک"
+        return (
+            f'<tg-emoji emoji-id="5803420768826038185">🔘</tg-emoji> <b>نام گروه :</b> {title}\n'
+            f'<tg-emoji emoji-id="5802963792895678011">⚫️</tg-emoji> <b>تعداد عضو :</b> {member_count}\n\n'
+            f'<tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji><tg-emoji emoji-id="6008124493610885197">🔗\n\n'
+            f'<tg-emoji emoji-id="6032888897082497570">📤</tg-emoji> <b>لینک گروه :</b>\n\n- {link_str}'
+        )
+
 async def post_init(application: Application):
     db = load_db()
     setup_chat_jobs(application.job_queue, db.get("active_chats", []))
@@ -2083,6 +2172,91 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("help_"):
         await query.answer("Coming soon..!", show_alert=True)
         return
+
+    # LINK PANEL & ACTIONS CALLBACKS
+    elif data.startswith("link_panel:"):
+        parts = data.split(":")
+        action = parts[1]
+        cid = int(parts[2])
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        if action == "close":
+            try: await query.message.delete()
+            except Exception: pass
+            await query.answer()
+            return
+        if action == "text":
+            text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
+            await query.message.edit_text(text_payload, reply_markup=build_link_sub_keyboard(cid, is_once=False), parse_mode=ParseMode.HTML)
+            return
+        elif action == "photo":
+            try:
+                chat_obj = await context.bot.get_chat(cid)
+                caption_text = await generate_group_link_text_payload(context, cid, is_once=False)
+                await query.message.delete()
+                if chat_obj.photo and chat_obj.photo.big_file_id:
+                    await context.bot.send_photo(chat_id=cid, photo=chat_obj.photo.big_file_id, caption=caption_text, parse_mode=ParseMode.HTML)
+                else:
+                    await context.bot.send_message(chat_id=cid, text=caption_text, parse_mode=ParseMode.HTML)
+            except Exception: pass
+            return
+        elif action == "once":
+            text_payload = await generate_group_link_text_payload(context, cid, is_once=True)
+            await query.message.edit_text(text_payload, reply_markup=build_link_sub_keyboard(cid, is_once=True), parse_mode=ParseMode.HTML)
+            return
+        elif action == "pv":
+            try:
+                text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
+                await context.bot.send_message(chat_id=user_id, text=text_payload, parse_mode=ParseMode.HTML)
+                await query.answer("✅ لینک گروه در پیوی شما ارسال شد.", show_alert=True)
+            except Exception:
+                await query.answer("❌ خطا در ارسال به پیوی (ربات را استارت کنید).", show_alert=True)
+            return
+
+    elif data.startswith("link_sub:"):
+        parts = data.split(":")
+        sub_action = parts[1]
+        cid = int(parts[2])
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        if sub_action == "back":
+            panel_text = f'<tg-emoji emoji-id="6044084382174552276">📊</tg-emoji> <b>نوع لینک را انتخاب کنید:</b>'
+            await query.message.edit_text(panel_text, reply_markup=build_link_panel_keyboard(cid), parse_mode=ParseMode.HTML)
+            return
+        elif sub_action == "revoke":
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ بله", callback_data=f"link_revoke:yes:{cid}", style="success", icon_custom_emoji_id="5830144944399981619"),
+                 InlineKeyboardButton("❌ خیر", callback_data=f"link_revoke:no:{cid}", style="danger", icon_custom_emoji_id="5819154526816444042")]
+            ])
+            await query.message.edit_text("<b>از حذف لینک نهایت اطمینان را دارید؟</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+            return
+
+    elif data.startswith("link_revoke:"):
+        parts = data.split(":")
+        decision = parts[1]
+        cid = int(parts[2])
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        if decision == "no":
+            text_payload = await generate_group_link_text_payload(context, cid, is_once=False)
+            await query.message.edit_text(text_payload, reply_markup=build_link_sub_keyboard(cid, is_once=False), parse_mode=ParseMode.HTML)
+            return
+        elif decision == "yes":
+            try:
+                links = await context.bot.get_chat_export_invite_links(cid)
+                for l in links:
+                    try: await context.bot.revoke_chat_invite_link(cid, l.invite_link)
+                    except Exception: pass
+            except Exception: pass
+            success_text = f'<tg-emoji emoji-id="5830144944399981619">✅</tg-emoji> <b>لینک شما با موفقیت حذف و با لینک جدید جایگزین شد.</b>'
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💠 بازگشت", callback_data=f"link_panel:text:{cid}", style="danger", icon_custom_emoji_id="5983093054842606366")]
+            ])
+            await query.message.edit_text(success_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            return    
 
     # LOCKS PANEL NAVIGATION & TOGGLE
     elif data.startswith("panel_group_locks:"):
@@ -3616,6 +3790,58 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw_text = update.message.text or update.message.caption or ""
         clean_raw = raw_text.strip().lower()
         norm_text = normalize_text(raw_text)
+        
+        # --------------------------------------
+        # LINK COMMAND HANDLER (GROUP ONLY)
+        # --------------------------------------
+        if is_group and LINK_COMMAND_PATTERN.match(raw_text):
+            if not await is_admin_or_owner(context, chat_id, user_id):
+                await update.message.reply_text(
+                    f'😐 <b>تو که ادمین نیستی! اجازه ندارم بهت لینک بدم.</b> <tg-emoji emoji-id="5276508228128103199">😐</tg-emoji>',
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            if not await check_bot_admin_and_link_rights(context, chat_id):
+                await update.message.reply_text(
+                    f'😔 <b>متاسفم! من ادمین گروه نیستم یا دسترسی به لینک ندارم.</b>\n'
+                    f'<b>لطفا به یکی از ادمین‌ها بگو مشکل رو حل کنن!</b> <tg-emoji emoji-id="5274171963487576924">🌟</tg-emoji>',
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            cmd_lower = raw_text.strip().lower()
+
+            if any(k in cmd_lower for k in ["عکس", "به صورت عکس", "رو عکس بفرست"]):
+                try:
+                    chat_obj = await context.bot.get_chat(chat_id)
+                    caption_text = await generate_group_link_text_payload(context, chat_id, is_once=False)
+                    if chat_obj.photo and chat_obj.photo.big_file_id:
+                        await context.bot.send_photo(chat_id=chat_id, photo=chat_obj.photo.big_file_id, caption=caption_text, parse_mode=ParseMode.HTML)
+                    else:
+                        await update.message.reply_text(caption_text, parse_mode=ParseMode.HTML)
+                except Exception:
+                    pass
+                return
+
+            elif "یک‌بار" in cmd_lower or "یکبار" in cmd_lower:
+                text_payload = await generate_group_link_text_payload(context, chat_id, is_once=True)
+                await update.message.reply_text(text_payload, reply_markup=build_link_sub_keyboard(chat_id, is_once=True), parse_mode=ParseMode.HTML)
+                return
+
+            elif "پیوی" in cmd_lower or "در پیوی" in cmd_lower:
+                try:
+                    text_payload = await generate_group_link_text_payload(context, chat_id, is_once=False)
+                    await context.bot.send_message(chat_id=user_id, text=text_payload, parse_mode=ParseMode.HTML)
+                    await update.message.reply_text("✅ لینک گروه با موفقیت در پیوی شما ارسال شد.", parse_mode=ParseMode.HTML)
+                except Exception:
+                    await update.message.reply_text("❌ خطا در ارسال لینک به پیوی! لطفاً ابتدا ربات را در پیوی استارت کنید.", parse_mode=ParseMode.HTML)
+                return
+
+            else:
+                panel_text = f'<tg-emoji emoji-id="6044084382174552276">📊</tg-emoji> <b>نوع لینک را انتخاب کنید:</b>'
+                await update.message.reply_text(panel_text, reply_markup=build_link_panel_keyboard(chat_id), parse_mode=ParseMode.HTML)
+                return 
 
         # --------------------------------------
         # 1. TEXT LOCK CONTROL COMMANDS (ADMIN ONLY - IN GROUP)
