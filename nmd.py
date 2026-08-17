@@ -38,6 +38,35 @@ from telegram.ext import (
     filters,
 )
 
+
+# Sanitize all outgoing text/captions while keeping Premium tg-emoji intact.
+from telegram import Message, Bot
+
+_original_message_reply_text = Message.reply_text
+async def _premium_reply_text(self, text=None, *args, **kwargs):
+    if isinstance(text, str):
+        text = premium_only_text(text)
+    return await _original_message_reply_text(self, text, *args, **kwargs)
+Message.reply_text = _premium_reply_text
+
+_original_message_edit_text = Message.edit_text
+async def _premium_edit_text(self, text=None, *args, **kwargs):
+    if isinstance(text, str):
+        text = premium_only_text(text)
+    return await _original_message_edit_text(self, text, *args, **kwargs)
+Message.edit_text = _premium_edit_text
+
+_original_bot_send_message = Bot.send_message
+async def _premium_send_message(self, *args, **kwargs):
+    if isinstance(kwargs.get("text"), str):
+        kwargs["text"] = premium_only_text(kwargs["text"])
+    elif args and isinstance(args[1] if len(args) > 1 else None, str):
+        args = list(args); args[1] = premium_only_text(args[1]); args = tuple(args)
+    if isinstance(kwargs.get("caption"), str):
+        kwargs["caption"] = premium_only_text(kwargs["caption"])
+    return await _original_bot_send_message(self, *args, **kwargs)
+Bot.send_message = _premium_send_message
+
 # ==========================================
 # CONFIGURATION & LOGGING
 # ==========================================
@@ -79,6 +108,49 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ==========================================
+# PREMIUM-ONLY EMOJI OUTPUT
+# ==========================================
+# Telegram custom/Premium emoji are represented by <tg-emoji ...>...</tg-emoji>.
+# Preserve those tags and remove ordinary Unicode emoji from bot text.
+_PLAIN_EMOJI_RE = re.compile(
+    r"[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002B00-\U00002BFF\U00002300-\U000023FF]"
+    r"|[\u200d\ufe0f]"
+)
+
+def premium_only_text(value):
+    if not isinstance(value, str):
+        return value
+    protected = []
+    def _protect(m):
+        protected.append(m.group(0))
+        return f"__TG_PREMIUM_{len(protected)-1}__"
+    value = re.sub(r"<tg-emoji\b[^>]*>.*?</tg-emoji>", _protect, value, flags=re.DOTALL | re.IGNORECASE)
+    value = _PLAIN_EMOJI_RE.sub("", value)
+    for i, tag in enumerate(protected):
+        value = value.replace(f"__TG_PREMIUM_{i}__", tag)
+    return value
+
+# Premium-only output for callback alerts and keyboard labels.
+try:
+    from telegram import CallbackQuery
+    _original_callback_answer = CallbackQuery.answer
+    async def _premium_callback_answer(self, text=None, *args, **kwargs):
+        if isinstance(text, str):
+            text = premium_only_text(text)
+        return await _original_callback_answer(self, text=text, *args, **kwargs)
+    CallbackQuery.answer = _premium_callback_answer
+except Exception:
+    pass
+
+_original_keyboard_button_init = InlineKeyboardButton.__init__
+def _premium_keyboard_button_init(self, text, *args, **kwargs):
+    if isinstance(text, str):
+        text = premium_only_text(text)
+    return _original_keyboard_button_init(self, text, *args, **kwargs)
+InlineKeyboardButton.__init__ = _premium_keyboard_button_init
+
 
 # ==========================================
 # DUMMY HTTP SERVER FOR RENDER WEB SERVICE
@@ -2812,7 +2884,7 @@ async def render_group_list_detail(query, context, chat_id: int, list_type: str,
     await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 async def render_cleanup_confirm(query, list_type: str, chat_id: int):
-    names = {"owners": "مالکین", "admins": "مدیران", "special": "اعضای ویژه", "exempt": "معاف‌شدگان", "warns": "اخطارها", "muted": "سکوت‌شده‌ها", "banned": "بن‌شده‌ها"}
+    names = {"owners": "مالکین", "admins": "مدیران", "special": "ویژه", "exempt": "معاف", "warns": "اخطارها", "muted": "سکوت ها", "banned": "بن ها"}
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("بله", callback_data=f"list_cleanup:{list_type}:{chat_id}", style="success", icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID),
         InlineKeyboardButton("بستن", callback_data=f"list_cleanup_cancel:{list_type}:{chat_id}", style="danger", icon_custom_emoji_id=CROSS_CUSTOM_EMOJI_ID)
@@ -3832,9 +3904,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if list_type == "owners": allowed = await is_configured_group_owner(context, cid, user_id) and is_primary_group_owner_id(g, user_id)
         if not allowed:
             await query.answer(" دسترسی غیرمجاز!", show_alert=True); return
-        names = {"owners": "مالکین", "admins": "مدیران", "special": "اعضای ویژه", "exempt": "معاف‌شدگان", "warns": "اخطارها", "muted": "سکوت‌شده‌ها", "banned": "بن‌شده‌ها"}
+        names = {"owners": "مالکین", "admins": "مدیران", "special": "ویژه", "exempt": "معاف", "warns": "اخطارها", "muted": "سکوت ها", "banned": "بن ها"}
         name = names.get(list_type, "لیست")
-        await query.message.edit_text(f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> پاکسازی {name} — با موفقیت کنسل شد.</b>', reply_markup=None, parse_mode=ParseMode.HTML)
+        await query.message.edit_text(f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> پاکسازی لیست {name} با موفقیت لغو شد.</b>', reply_markup=None, parse_mode=ParseMode.HTML)
         await query.answer(); return
 
     elif data.startswith("list_cleanup:"):
@@ -3861,9 +3933,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 except Exception: pass
             g["banned_users"] = {}
         mark_db_dirty(); save_db(force=True)
-        names = {"owners": "مالکین", "admins": "مدیران", "special": "اعضای ویژه", "exempt": "معاف‌شدگان", "warns": "اخطارها", "muted": "سکوت‌شده‌ها", "banned": "بن‌شده‌ها"}
+        names = {"owners": "مالکین", "admins": "مدیران", "special": "ویژه", "exempt": "معاف", "warns": "اخطارها", "muted": "سکوت ها", "banned": "بن ها"}
         name = names.get(list_type, "لیست")
-        await query.message.edit_text(f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> پاکسازی {name} — با موفقیت انجام شد.</b>', reply_markup=None, parse_mode=ParseMode.HTML)
+        await query.message.edit_text(f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> پاکسازی لیست {name} با موفقیت انجام شد.</b>', reply_markup=None, parse_mode=ParseMode.HTML)
         await query.answer(); return
 
     elif data.startswith("panel_list_poems:"):
@@ -4889,17 +4961,23 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     if role == "owners" and primary_owner:
                         await update.message.reply_text(
-                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {get_user_mention(uid, name)} از قبل مالک گروه می‌باشد.</b>',
+                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>',
                             parse_mode=ParseMode.HTML
                         ); return
 
                     if role == "admins":
+                        # مالک گروه باید فقط با عنوان مالک شناخته شود.
+                        if primary_owner:
+                            await update.message.reply_text(
+                                f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>',
+                                parse_mode=ParseMode.HTML
+                            ); return
                         # First check the bot's own lists.
                         if int(uid) in admin_ids:
                             if int(uid) in owner_ids or primary_owner:
-                                msg = f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {get_user_mention(uid, name)} از قبل مدیر می‌باشد و مالک گروه می‌باشد.</b>'
+                                msg = f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>'
                             else:
-                                msg = f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> کاربر {get_user_mention(uid, name)} از قبل مدیر می‌باشد.</b>'
+                                msg = f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> مدیر می‌باشد.</b>'
                             await update.message.reply_text(msg, parse_mode=ParseMode.HTML); return
 
                         # Then check Telegram itself so a Telegram admin is never
@@ -4918,7 +4996,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 ids.append(uid)
                             mark_db_dirty(); save_db(force=True)
                             await update.message.reply_text(
-                                f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {get_user_mention(uid, name)} از قبل مدیر می‌باشد و مالک گروه می‌باشد.</b>',
+                                f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>',
                                 parse_mode=ParseMode.HTML
                             ); return
 
@@ -4947,7 +5025,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     if role == "owners" and int(uid) in owner_ids:
                         await update.message.reply_text(
-                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {get_user_mention(uid, name)} از قبل مالک گروه می‌باشد.</b>',
+                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>',
                             parse_mode=ParseMode.HTML
                         ); return
 
@@ -5136,8 +5214,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f'<b>›› <tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک ربات می‌باشد.</b>', parse_mode=ParseMode.HTML); return
                 if uid in _role_ids(g_data, "special"):
                     await update.message.reply_text(f'<b>›› <tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر عضو ویژه می‌باشد.</b>', parse_mode=ParseMode.HTML); return
+                if is_primary_group_owner_id(g_data, uid):
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>', parse_mode=ParseMode.HTML); return
                 if is_group_manager_id(g_data, uid):
-                    await update.message.reply_text(f'<b>› <tg-emoji emoji-id="{PREMIUM_USER_EMOJI}">👤</tg-emoji> کاربر {get_user_mention(uid,name)}</b>\n\n<b>›› <tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مدیر / مالک گروه می‌باشد.</b>', parse_mode=ParseMode.HTML); return
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> مدیر می‌باشد.</b>', parse_mode=ParseMode.HTML); return
                 if action in ("ban", "mute") and not await bot_can_restrict_members(context, chat_id):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات دسترسی {"بن کردن" if action=="ban" else "سکوت کردن"} را ندارد.</b>', parse_mode=ParseMode.HTML); return
                 db.setdefault("members", {})[str(uid)] = {"username": uname, "fullname": name}
@@ -5153,7 +5233,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     g_data.setdefault("moderation_message_targets", {})[str(result_msg.message_id)] = int(uid)
                     mark_db_dirty(); save_db(force=True)
                     return
-                seconds, label = parse_duration_text(duration_arg, default_permanent=True)
+                # Empty duration (including reply with no duration) is always permanent.
+                if not duration_arg.strip():
+                    seconds, label = None, "دائم"
+                else:
+                    seconds, label = parse_duration_text(duration_arg, default_permanent=True)
+                    if seconds is not None and seconds <= 0:
+                        seconds, label = None, "دائم"
                 try:
                     if action == "ban":
                         until_dt = None if seconds is None else datetime.now() + timedelta(seconds=seconds)
@@ -5212,16 +5298,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if lock_key and lock_key in ALL_LOCKS and not ALL_LOCKS[lock_key].get("is_category"):
                         g_data = get_group_data(db, chat_id)
                         locks = g_data.setdefault("locks", get_default_locks_structure())
+                        current_state = bool(locks.get(lock_key, False))
+                        fa_name = ALL_LOCKS[lock_key]["name"]
+
+                        if current_state == lock_action:
+                            if lock_action:
+                                reply_text = f'قفل {fa_name} از قبل فعال بود. <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
+                            else:
+                                reply_text = f'قفل {fa_name} از قبل غیرفعال بود. <tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji>'
+                            await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML)
+                            return
+
                         locks[lock_key] = lock_action
                         mark_db_dirty()
                         save_db(force=True)
 
-                        fa_name = ALL_LOCKS[lock_key]["name"]
                         action_word = "فعال" if lock_action else "غیرفعال"
                         log_admin_action(db, user_id, update.effective_user.full_name, chat.title, chat_id, f"دستور متنی {fa_name}", f"وضعیت: {action_word}")
 
                         if lock_action:
-                            reply_text = f'قفل {fa_name} با موفقیت فعال شد! <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
+                            reply_text = f'قفل {fa_name} با موفقیت فعال شد. <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
                         else:
                             reply_text = f'قفل {fa_name} با موفقیت غیرفعال شد. <tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji>'
 
@@ -5291,7 +5387,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     now_dt = datetime.now()
                     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-                    if dur_clean in perm_triggers:
+                    # Empty/zero duration means permanent. Never fall back to 1 or 60 minutes.
+                    if not dur_clean or dur_clean in perm_triggers:
                         b_type = "permanent"
                         b_until = None
                         dur_display = "دائم"
@@ -5299,12 +5396,16 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         min_str = fa_to_en_digits(dur_clean)
                         try:
                             minutes = int(min_str)
-                            if minutes <= 0: minutes = 60
                         except ValueError:
-                            minutes = 60
-                        b_type = "temporary"
-                        b_until = now_dt.timestamp() + (minutes * 60)
-                        dur_display = f"{minutes} دقیقه"
+                            minutes = 0
+                        if minutes <= 0:
+                            b_type = "permanent"
+                            b_until = None
+                            dur_display = "دائم"
+                        else:
+                            b_type = "temporary"
+                            b_until = now_dt.timestamp() + (minutes * 60)
+                            dur_display = f"{minutes} دقیقه"
 
                     db["global_bans"][str(target_uid)] = {
                         "type": b_type,
@@ -5376,7 +5477,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     now_dt = datetime.now()
                     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-                    if dur_clean in perm_triggers:
+                    # Empty/zero duration means permanent. Never fall back to 1 or 120 minutes.
+                    if not dur_clean or dur_clean in perm_triggers:
                         b_type = "permanent"
                         b_until = None
                         dur_display = "دائم"
@@ -5384,12 +5486,16 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         min_str = fa_to_en_digits(dur_clean)
                         try:
                             minutes = int(min_str)
-                            if minutes <= 0: minutes = 120
                         except ValueError:
-                            minutes = 120
-                        b_type = "temporary"
-                        b_until = now_dt.timestamp() + (minutes * 60)
-                        dur_display = f"{minutes} دقیقه"
+                            minutes = 0
+                        if minutes <= 0:
+                            b_type = "permanent"
+                            b_until = None
+                            dur_display = "دائم"
+                        else:
+                            b_type = "temporary"
+                            b_until = now_dt.timestamp() + (minutes * 60)
+                            dur_display = f"{minutes} دقیقه"
 
                     db["global_group_bans"][str(target_cid)] = {
                         "type": b_type,
