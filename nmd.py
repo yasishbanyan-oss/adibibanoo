@@ -2519,7 +2519,6 @@ WHISPER_GUIDE_EMOJI_ID = "6084584811379299518"
 WHISPER_NOT_FOUND_EMOJI_ID = "5819154526816444042"
 WHISPER_PHONE_EMOJI_ID = "6057891250332241964"
 WHISPER_SENT_EMOJI_ID = "6059631768649077274"
-WHISPER_READ_EMOJI_ID = "6084779072750097974"
 WHISPER_REPEAT_EMOJI_ID = "5843493805835165294"
 WHISPER_SUPPORT_EMOJI_ID = "5911319564301376749"
 WHISPER_DELETE_EMOJI_ID = "5819154526816444042"
@@ -2543,7 +2542,7 @@ def build_whisper_sent_keyboard(w_id: str) -> InlineKeyboardMarkup:
                 "خواندن نجوا",
                 callback_data=f"wh_read:{w_id}",
                 style="success",
-                icon_custom_emoji_id=WHISPER_READ_EMOJI_ID,
+                icon_custom_emoji_id=6084779072750097974,
             ),
             InlineKeyboardButton(
                 "حذف نجوا",
