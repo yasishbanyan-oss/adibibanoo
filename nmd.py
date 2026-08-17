@@ -3405,10 +3405,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("این نجوا برای شما نیست.", show_alert=True)
             return
 
-        # Show only the original whisper text; do not change the stored whisper data.
+        # Everyone who is authorized (sender or real receiver) can view the
+        # whisper text, but ONLY the real receiver may mark it as read.
         await query.answer(w_data["text"], show_alert=True)
 
-        if is_target and not w_data.get("read", False):
+        if not is_target:
+            # Sender can preview/read their own sent whisper, but this must not
+            # mutate read state, add post-read buttons, or notify the sender.
+            return
+
+        if not w_data.get("read", False):
             w_data["read"] = True
             w_data["reader_id"] = u_id
             w_data["reader_username"] = query.from_user.username or ""
@@ -3417,7 +3423,32 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             mark_db_dirty()
             save_db(force=True)
 
-        # After reading, both sender and receiver get exactly these three actions.
+            # Notify the sender only when the real receiver actually reads it.
+            reader_username = (query.from_user.username or "").strip().lstrip("@")
+            if reader_username:
+                reader_label = f"@{html.escape(reader_username)}"
+            else:
+                reader_label = html.escape(query.from_user.full_name or "کاربر")
+
+            read_notification = (
+                f'{whisper_emoji(WHISPER_HELP_EMOJI_ID, "✅")} '
+                f'نجوای ارسالی با موفقیت توسط کاربر {reader_label} خوانده شد.'
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=sender_id,
+                    text=read_notification,
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not notify whisper sender %s about read %s: %s",
+                    sender_id,
+                    w_id,
+                    e,
+                )
+
+        # Post-read actions are exposed only after the real receiver has read.
         try:
             await query.edit_message_reply_markup(
                 reply_markup=build_whisper_read_keyboard(w_data, w_id)
