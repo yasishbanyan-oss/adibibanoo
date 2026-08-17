@@ -861,6 +861,15 @@ def parse_duration_text(text: str, default_permanent: bool = True) -> tuple[floa
     value = re.sub(r"\s+", " ", value)
     if not value: return (None, "دائم") if default_permanent else (None, "")
     if value in PERMANENT_DURATION_WORDS: return None, "دائم"
+    # A bare number is ALWAYS interpreted as minutes. Zero means permanent.
+    # Keep the exact number entered; never silently replace it with 1 minute.
+    bare_number = re.fullmatch(r"\d+(?:\.\d+)?", value)
+    if bare_number:
+        n = float(value)
+        if n <= 0:
+            return None, "دائم"
+        label = f"{int(n) if n.is_integer() else n} دقیقه"
+        return n * 60, label
     words = value.split()
     if len(words) == 2 and words[0] in PERSIAN_NUMBER_WORDS:
         n, unit = PERSIAN_NUMBER_WORDS[words[0]], words[1]
@@ -872,7 +881,7 @@ def parse_duration_text(text: str, default_permanent: bool = True) -> tuple[floa
     n = float(n)
     u = str(unit).lower()
     if n <= 0:
-        n = 1.0
+        return None, "دائم"
     if u.startswith(("ثانیه", "second", "sec", "s")): sec, label = n, f"{int(n) if n.is_integer() else n} ثانیه"
     elif u.startswith(("دقیقه", "minute", "min", "m")): sec, label = n*60, f"{int(n) if n.is_integer() else n} دقیقه"
     elif u.startswith(("ساعت", "hour", "hr", "h")): sec, label = n*3600, f"{int(n) if n.is_integer() else n} ساعت"
@@ -4954,6 +4963,37 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     primary_owner = is_primary_group_owner_id(g_data, uid)
                     target_label = f"@{html.escape(uname.lstrip('@'))}" if uname else get_user_mention(uid, name)
 
+                    # Always check Telegram's live role as well. The local bot list can
+                    # be stale, especially for the primary group owner. This check is
+                    # intentionally done for every role-assignment command so the owner
+                    # is never reported as merely "added" or shown without their username.
+                    live_owner = False
+                    live_admin = False
+                    try:
+                        live_member = await context.bot.get_chat_member(chat_id, uid)
+                        live_owner = live_member.status == ChatMemberStatus.OWNER
+                        live_admin = live_member.status == ChatMemberStatus.ADMINISTRATOR
+                        if getattr(live_member, "user", None):
+                            live_name = live_member.user.full_name or name
+                            live_uname = live_member.user.username or uname
+                            target_label = f"@{html.escape(live_uname.lstrip('@'))}" if live_uname else get_user_mention(uid, live_name)
+                            name = live_name
+                            uname = live_uname
+                    except Exception:
+                        pass
+
+                    if role != "special" and live_owner:
+                        # Keep the local owner list synchronized without changing any
+                        # other behavior. For all management-role commands, owner wins.
+                        ids = g_data["management"].setdefault("owners", [])
+                        if uid not in [int(x) for x in ids]:
+                            ids.append(uid)
+                            mark_db_dirty(); save_db(force=True)
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {target_label} مالک می‌باشد.</b>',
+                            parse_mode=ParseMode.HTML
+                        ); return
+
                     if role == "special" and int(uid) == int(OWNER_ID):
                         await update.message.reply_text(
                             f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک ربات می‌باشد و نمی‌تواند عضو ویژه شود.</b>',
@@ -4962,7 +5002,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     if role == "owners" and primary_owner:
                         await update.message.reply_text(
-                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>',
+                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {target_label} مالک می‌باشد.</b>',
                             parse_mode=ParseMode.HTML
                         ); return
 
@@ -4983,12 +5023,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         # Then check Telegram itself so a Telegram admin is never
                         # incorrectly reported as newly promoted by the bot.
-                        try:
-                            target_member = await context.bot.get_chat_member(chat_id, uid)
-                            target_is_owner = target_member.status == ChatMemberStatus.OWNER
-                            target_is_admin = target_member.status == ChatMemberStatus.ADMINISTRATOR
-                        except Exception:
-                            target_is_owner = target_is_admin = False
+                        target_is_owner = live_owner
+                        target_is_admin = live_admin
 
                         if target_is_owner:
                             # Keep the bot's management data in sync with Telegram.
@@ -5201,13 +5237,43 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif match_prefix(unmute_cmds): action, matched = "unmute", match_prefix(unmute_cmds)
             elif match_prefix(ban_cmds): action, matched = "ban", match_prefix(ban_cmds)
             elif match_prefix(mute_cmds): action, matched = "mute", match_prefix(mute_cmds)
+
+            # Also accept the natural reply syntax used in the chat screenshots:
+            #   «9999 سکوت» / «9999 بن»
+            # and, when not replying, «123456789 سکوت 9999».
+            # Existing «سکوت 9999» / «بن 9999» syntax remains unchanged.
+            if not action:
+                parts = cmd.split()
+                if len(parts) >= 2 and parts[-1] in mute_cmds + ban_cmds and update.message.reply_to_message:
+                    action = "mute" if parts[-1] in mute_cmds else "ban"
+                    matched = parts[-1]
+                    pre_duration = " ".join(parts[:-1]).strip()
+                elif len(parts) >= 2 and parts[1] in mute_cmds + ban_cmds:
+                    action = "mute" if parts[1] in mute_cmds else "ban"
+                    matched = parts[1]
+                    pre_target = parts[0]
+                    pre_duration = " ".join(parts[2:]).strip()
+                else:
+                    pre_duration = ""
+                    pre_target = ""
+            else:
+                pre_duration = ""
+                pre_target = ""
+
             if action:
                 if not await is_configured_group_manager(context, chat_id, user_id):
                     await update.message.reply_text('<b><tg-emoji emoji-id="{0}">❌</tg-emoji> شما اجازه اجرای این دستور را ندارید.</b>'.format(CROSS_CUSTOM_EMOJI_ID), parse_mode=ParseMode.HTML); return
                 rest = cmd[len(matched):].strip()
                 reply_target = bool(update.message.reply_to_message)
-                target_arg = "" if reply_target else (rest.split()[0] if rest else "")
-                duration_arg = rest if reply_target else " ".join(rest.split()[1:])
+                if pre_duration:
+                    target_arg = ""
+                    duration_arg = pre_duration
+                elif pre_target:
+                    target_arg = pre_target
+                    duration_arg = pre_duration
+                else:
+                    target_arg = "" if reply_target else (rest.split()[0] if rest else "")
+                    duration_arg = rest if reply_target else " ".join(rest.split()[1:])
                 uid, name, uname = await resolve_group_target(update, context, db, chat_id, target_arg)
                 if not uid:
                     await update.message.reply_text('<b>روی کاربر ریپلای کنید یا آیدی/یوزرنیم او را وارد کنید.</b>', parse_mode=ParseMode.HTML); return
