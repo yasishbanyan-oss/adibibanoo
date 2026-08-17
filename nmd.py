@@ -3213,7 +3213,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         sent_text = (
-            f'<tg-emoji emoji-id="6084779072750097974">✅</tg-emoji> '
+            f'<tg-emoji emoji-id="6059631768649077274">📣</tg-emoji> '
             f'<b>یک نجوا برای کاربر {html.escape(display_target)} ارسال شد.</b>'
         )
 
