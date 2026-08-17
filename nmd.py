@@ -2582,7 +2582,7 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
                 description="یوزرنیم یا آیدی عددی دریافت کننده را دوباره بررسی کنید.",
                 input_message_content=InputTextMessageContent(
                     '<tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> <b>گیرنده یافت نشد!!</b>\n'
-                    '<b>- یوزرنیم یا آیدی عددی دریافت کننده را دوباره بررسی کنید.</b>', 
+                    '<b>- یوزرنیم یا آیدی عددی دریافت کننده را دوباره بررسی کنید.</b>',
                     parse_mode=ParseMode.HTML
                 )
             )
@@ -2626,22 +2626,17 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
     save_db(force=True)
 
     display_target = f"@{target_uname}" if target_uname else str(target_uid)
-    result_title = f"تأیید ارسال نجوا به {display_target}"
+    result_title = f"ارسال پیام نجوا به {display_target}"
     result_html = (
         f'<tg-emoji emoji-id="6057891250332241964">📱</tg-emoji> '
-        f'<b>شما درحال ارسال پیام نجوا به کاربر {display_target} می‌باشید.</b>\n'
-        f'<b>- جهت تایید روی این دکمه کلیک کنید!</b> '
-        f'<tg-emoji emoji-id="6084779072750097974">✅</tg-emoji>'
+        f'<b>شما درحال ارسال پیام نجوا به کاربر {html.escape(display_target)} می‌باشید.</b>\n'
+        f'<b>- جهت تایید روی این دکمه کلیک کنید! <tg-emoji emoji-id="6084779072750097974">✅</tg-emoji></b>'
     )
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(
-                "تایید ارسال",
-                callback_data=f"wh_confirm:{w_id}",
-                style="success",
-                icon_custom_emoji_id="6084779072750097974"
-            )
+            InlineKeyboardButton("مشاهده نجوا", callback_data=f"wh_read:{w_id}", style="success", icon_custom_emoji_id="6084779072750097974"),
+            InlineKeyboardButton("حذف نجوا", callback_data=f"wh_del:{w_id}", style="danger", icon_custom_emoji_id="5819154526816444042")
         ]
     ])
 
@@ -3192,62 +3187,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
      # WHISPER (NAJVA) CALLBACKS
-    elif data.startswith("wh_confirm:"):
-        w_id = data.replace("wh_confirm:", "")
+    elif data.startswith("wh_read:"):
+        w_id = data.replace("wh_read:", "")
         whispers = db.get("whispers", {})
 
         if w_id not in whispers:
             await query.answer("این نجوا منقضی یا حذف شده است!", show_alert=True)
-            return
-
-        w_data = whispers[w_id]
-        if query.from_user.id != w_data["sender_id"]:
-            await query.answer("فقط فرستنده نجوا می‌تواند ارسال آن را تایید کند.", show_alert=True)
-            return
-
-        display_target = (
-            f"@{w_data['target_username']}"
-            if w_data.get("target_username")
-            else str(w_data.get("target_uid"))
-        )
-        sent_text = (
-            f'<tg-emoji emoji-id="6059631768649077274">📣</tg-emoji> '
-            f'<b>یک نجوا برای کاربر {display_target} ارسال شد.</b>'
-        )
-        sent_kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "مشاهده نجوا",
-                    callback_data=f"wh_read:{w_id}",
-                    style="success",
-                    icon_custom_emoji_id="6084779072750097974"
-                ),
-                InlineKeyboardButton(
-                    "حذف نجوا",
-                    callback_data=f"wh_del:{w_id}",
-                    style="danger",
-                    icon_custom_emoji_id="5819154526816444042"
-                )
-            ]
-        ])
-
-        try:
-            await query.message.edit_text(
-                sent_text,
-                reply_markup=sent_kb,
-                parse_mode=ParseMode.HTML
-            )
-            await query.answer()
-        except Exception:
-            await query.answer("تایید ارسال نجوا ناموفق بود.", show_alert=True)
-        return
-
-    elif data.startswith("wh_read:"):
-        w_id = data.replace("wh_read:", "")
-        whispers = db.get("whispers", {})
-        
-        if w_id not in whispers:
-            await query.answer(" این نجوا منقضی یا حذف شده است!", show_alert=True)
             return
 
         w_data = whispers[w_id]
@@ -3256,8 +3201,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             whispers.pop(w_id, None)
             mark_db_dirty()
             save_db(force=True)
-            await query.answer(" این نجوا منقضی شده است!", show_alert=True)
+            await query.answer("این نجوا منقضی شده است!", show_alert=True)
             return
+
         sender_id = w_data["sender_id"]
         target_uid = w_data.get("target_uid")
         target_uname = w_data.get("target_username")
@@ -3269,9 +3215,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         is_target = (target_uid and u_id == target_uid) or (target_uname and u_uname == target_uname)
 
         if not is_sender and not is_target:
-            await query.answer(" فضولی نکن! این نجوا برای شما نیست.", show_alert=True)
+            await query.answer("فضولی نکن! این نجوا برای شما نیست.", show_alert=True)
             return
 
+        # نمایش فقط خود پیام؛ بدون عبارت «محتوای نجوا» یا متن اضافه.
         await query.answer(w_data["text"], show_alert=True)
 
         if is_target and not w_data.get("read", False):
@@ -3284,54 +3231,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             save_db(force=True)
 
             r_mention = get_user_mention(u_id, query.from_user.full_name)
-            edited_text = f'<b><tg-emoji emoji-id="5830245188936670873">🌟</tg-emoji> نجوا با موفقیت توسط کاربر {r_mention} خوانده شد.</b>'
+            edited_text = (
+                f'<b><tg-emoji emoji-id="6084779072750097974">✅</tg-emoji> '
+                f'نجوا با موفقیت توسط کاربر {r_mention} خوانده شد.</b>'
+            )
 
+            support_button = InlineKeyboardButton(
+                "کانال پشتیبانی",
+                url="https://t.me/GoodiSupport",
+                style="primary",
+                icon_custom_emoji_id="5911319564301376749"
+            )
             new_kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "خواندن مجدد",
-                        callback_data=f"wh_read:{w_id}",
-                        style="primary",
-                        icon_custom_emoji_id="5843493805835165294"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "پاسخ به نجوا",
-                        switch_inline_query_current_chat=f"@{w_data['sender_username']} " if w_data.get('sender_username') else f"{w_data['sender_id']} ",
-                        style="success",
-                        icon_custom_emoji_id="6084779072750097974"
-                    ),
-                    InlineKeyboardButton(
-                        "کانال پشتیبانی",
-                        url="https://t.me/GoodiSupport",
-                        style="success",
-                        icon_custom_emoji_id="5911319564301376749"
-                    )
-                ]
-            ]) if is_target and not is_sender else InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "خواندن مجدد",
-                        callback_data=f"wh_read:{w_id}",
-                        style="primary",
-                        icon_custom_emoji_id="5843493805835165294"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "حذف نجوا",
-                        callback_data=f"wh_del:{w_id}",
-                        style="danger",
-                        icon_custom_emoji_id="5819154526816444042"
-                    ),
-                    InlineKeyboardButton(
-                        "پاسخ به نجوا",
-                        switch_inline_query_current_chat=f"@{w_data['sender_username']} " if w_data.get('sender_username') else f"{w_data['sender_id']} ",
-                        style="success",
-                        icon_custom_emoji_id="6084779072750097974"
-                    )
-                ]
+                [InlineKeyboardButton("خواندن مجدد", callback_data=f"wh_read:{w_id}", style="primary", icon_custom_emoji_id="5843493805835165294")],
+                [InlineKeyboardButton("پاسخ به نجوا", switch_inline_query_current_chat=f"@{w_data['sender_username']} " if w_data.get('sender_username') else f"{w_data['sender_id']} ", style="success", icon_custom_emoji_id="6084779072750097974")],
+                [support_button]
             ])
 
             try:
@@ -3345,7 +3259,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         whispers = db.get("whispers", {})
 
         if w_id not in whispers:
-            await query.answer(" این نجوا قبلاً حذف شده است!", show_alert=True)
+            await query.answer("این نجوا قبلاً حذف شده است!", show_alert=True)
             return
 
         w_data = whispers[w_id]
@@ -3357,14 +3271,14 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         mark_db_dirty()
         save_db(force=True)
 
-        await query.answer(" نجوای شما با موفقیت حذف شد.", show_alert=True)
+        await query.answer("نجوای شما با موفقیت حذف شد.", show_alert=True)
 
         try:
             del_text = '<b><tg-emoji emoji-id="5818716826699307883">❗️</tg-emoji> این نجوا توسط فرستنده حذف گردید.</b>'
             await query.edit_message_text(del_text, reply_markup=None, parse_mode=ParseMode.HTML)
         except Exception:
             pass
-        return  
+        return
 
     elif data.startswith("tgl_srv_lock:"):
         parts = data.split(":")
