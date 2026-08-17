@@ -348,7 +348,10 @@ def normalize_text(text: str) -> str:
         return ""
     text = re.sub(r"[؟?\.,!؛\-_]", " ", text)
     text = text.replace("\u200c", " ")
-    text = re.sub(r"(.)\1{2,}", r"\1", text)
+    # Do not collapse repeated digits: moderation durations such as 9999
+    # and 278181818 are meaningful numeric values. Repeated-letter cleanup
+    # is intentionally limited to non-digit characters.
+    text = re.sub(r"([^\d])\1{2,}", r"\1", text)
     text = re.sub(r"ه{2,}", "ه", text)
     text = re.sub(r"و{2,}", "و", text)
     text = re.sub(r"ی{2,}", "ی", text)
@@ -854,6 +857,23 @@ async def resolve_group_target(update, context, db, chat_id: int, target_text: s
                 except Exception:
                     return int(uid), info.get("fullname", "کاربر"), info.get("username", uname)
     return None, "", ""
+
+
+TELEGRAM_MAX_TIMED_RESTRICTION_SECONDS = 366 * 24 * 60 * 60
+
+def moderation_until_datetime(seconds: float | None):
+    """Return a Telegram-safe timed restriction date.
+
+    Telegram treats restriction dates farther than roughly 366 days as
+    permanent. For very large user-entered durations we therefore omit
+    until_date instead of letting the Bot API reject the request. The bot
+    still keeps the requested duration/label in its own moderation record.
+    """
+    if seconds is None:
+        return None
+    if seconds > TELEGRAM_MAX_TIMED_RESTRICTION_SECONDS:
+        return None
+    return datetime.now() + timedelta(seconds=seconds)
 
 
 def parse_duration_text(text: str, default_permanent: bool = True) -> tuple[float | None, str]:
@@ -4945,10 +4965,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 matched = next((x for x in prefixes if cmd == x or cmd.startswith(x + " ")), None)
                 if matched:
                     rest = cmd[len(matched):].strip()
-                    if role == "admins" or role == "owners":
-                        allowed = await is_configured_group_owner(context, chat_id, user_id)
-                    else:
-                        allowed = await is_configured_group_owner(context, chat_id, user_id)
+                    # Role-management is a group-management operation. Any
+                    # configured group manager (or a Telegram admin when the
+                    # group has not been configured) may use it; it must not
+                    # depend on the bot owner's identity.
+                    allowed = await is_configured_group_manager(context, chat_id, user_id)
                     if not allowed:
                         await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مالکین گروه دسترسی اجرای این دستور را دارند.</b>', parse_mode=ParseMode.HTML); return
                     uid, name, uname = await resolve_group_target(update, context, db, chat_id, rest)
@@ -4982,15 +5003,32 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         pass
 
-                    if role != "special" and live_owner:
-                        # Keep the local owner list synchronized without changing any
-                        # other behavior. For all management-role commands, owner wins.
+                    # Group hierarchy is protected for all role-management
+                    # commands. Exempt users are deliberately NOT protected
+                    # here and can still receive any management role.
+                    if live_owner or primary_owner:
                         ids = g_data["management"].setdefault("owners", [])
                         if uid not in [int(x) for x in ids]:
                             ids.append(uid)
                             mark_db_dirty(); save_db(force=True)
                         await update.message.reply_text(
-                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {target_label} مالک می‌باشد.</b>',
+                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {target_label} مالک گروه می‌باشد و توانایی انجام چنین کاری وجود ندارد.</b>',
+                            parse_mode=ParseMode.HTML
+                        ); return
+
+                    if live_admin or int(uid) in admin_ids:
+                        ids = g_data["management"].setdefault("admins", [])
+                        if uid not in [int(x) for x in ids]:
+                            ids.append(uid)
+                            mark_db_dirty(); save_db(force=True)
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> کاربر {target_label} ادمین گروه می‌باشد و توانایی انجام چنین کاری وجود ندارد.</b>',
+                            parse_mode=ParseMode.HTML
+                        ); return
+
+                    if int(uid) in _role_ids(g_data, "special"):
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {target_label} عضو ویژه می‌باشد و توانایی انجام چنین کاری وجود ندارد.</b>',
                             parse_mode=ParseMode.HTML
                         ); return
 
@@ -5050,7 +5088,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     if role == "special" and int(uid) in role_ids:
                         await update.message.reply_text(
-                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {get_user_mention(uid, name)} از قبل عضو ویژه می‌باشد.</b>',
+                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {target_label} از قبل عضو ویژه می‌باشد.</b>',
                             parse_mode=ParseMode.HTML
                         ); return
 
@@ -5279,12 +5317,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text('<b>روی کاربر ریپلای کنید یا آیدی/یوزرنیم او را وارد کنید.</b>', parse_mode=ParseMode.HTML); return
                 if int(uid) == int(OWNER_ID):
                     await update.message.reply_text(f'<b>›› <tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک ربات می‌باشد.</b>', parse_mode=ParseMode.HTML); return
-                if uid in _role_ids(g_data, "special"):
-                    await update.message.reply_text(f'<b>›› <tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر عضو ویژه می‌باشد.</b>', parse_mode=ParseMode.HTML); return
+                # Group hierarchy protection. Exempt users are intentionally
+                # allowed through and may still be muted/banned/promoted.
                 if is_primary_group_owner_id(g_data, uid):
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>', parse_mode=ParseMode.HTML); return
-                if is_group_manager_id(g_data, uid):
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> مدیر می‌باشد.</b>', parse_mode=ParseMode.HTML); return
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {html.escape("@" + uname.lstrip("@")) if uname else get_user_mention(uid, name)} مالک گروه می‌باشد و توانایی انجام چنین کاری وجود ندارد.</b>', parse_mode=ParseMode.HTML); return
+                if uid in _role_ids(g_data, "admins"):
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> کاربر {html.escape("@" + uname.lstrip("@")) if uname else get_user_mention(uid, name)} ادمین گروه می‌باشد و توانایی انجام چنین کاری وجود ندارد.</b>', parse_mode=ParseMode.HTML); return
+                if uid in _role_ids(g_data, "special"):
+                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {html.escape("@" + uname.lstrip("@")) if uname else get_user_mention(uid, name)} عضو ویژه می‌باشد و توانایی انجام چنین کاری وجود ندارد.</b>', parse_mode=ParseMode.HTML); return
 
                 # Also inspect Telegram's live role. This prevents trying to mute/ban
                 # a real group owner/admin when the bot's local management list is stale.
@@ -5293,13 +5333,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if live_member.status == ChatMemberStatus.OWNER:
                         live_label = f"@{html.escape(uname.lstrip('@'))}" if uname else get_user_mention(uid, name)
                         await update.message.reply_text(
-                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {live_label} مالک می‌باشد.</b>',
+                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {live_label} مالک گروه می‌باشد و توانایی انجام چنین کاری وجود ندارد.</b>',
                             parse_mode=ParseMode.HTML
                         ); return
                     if live_member.status == ChatMemberStatus.ADMINISTRATOR:
                         live_label = f"@{html.escape(uname.lstrip('@'))}" if uname else get_user_mention(uid, name)
                         await update.message.reply_text(
-                            f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> کاربر {live_label} مدیر می‌باشد.</b>',
+                            f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> کاربر {live_label} ادمین گروه می‌باشد و توانایی انجام چنین کاری وجود ندارد.</b>',
                             parse_mode=ParseMode.HTML
                         ); return
                 except Exception:
@@ -5329,13 +5369,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         seconds, label = None, "دائم"
                 try:
                     if action == "ban":
-                        until_dt = None if seconds is None else datetime.now() + timedelta(seconds=seconds)
+                        until_dt = moderation_until_datetime(seconds)
                         if until_dt: await context.bot.ban_chat_member(chat_id, uid, until_date=until_dt)
                         else: await context.bot.ban_chat_member(chat_id, uid)
                         g_data["banned_users"][str(uid)] = {"username": uname, "fullname": name, "until": None if seconds is None else datetime.now().timestamp()+seconds, "created_at": datetime.now().timestamp()}
                         phrase = "به‌صورت دائم بن شد." if seconds is None else f"به مدت {label} بن شد."
                     else:
-                        until_dt = None if seconds is None else datetime.now() + timedelta(seconds=seconds)
+                        until_dt = moderation_until_datetime(seconds)
                         if until_dt: await context.bot.restrict_chat_member(chat_id, uid, permissions=full_mute_permissions(), until_date=until_dt)
                         else: await context.bot.restrict_chat_member(chat_id, uid, permissions=full_mute_permissions())
                         g_data["muted_users"][str(uid)] = {"username": uname, "fullname": name, "until": None if seconds is None else datetime.now().timestamp()+seconds, "created_at": datetime.now().timestamp()}
