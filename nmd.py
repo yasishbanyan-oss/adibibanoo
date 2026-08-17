@@ -2512,24 +2512,112 @@ async def dwoz_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 # ==========================================
 # WHISPER (INLINE NAJVA) SYSTEM
 # ==========================================
+WHISPER_SUPPORT_URL = "https://t.me/GoodiSupport"
+
+WHISPER_HELP_EMOJI_ID = "6084779072750097974"
+WHISPER_GUIDE_EMOJI_ID = "6084584811379299518"
+WHISPER_NOT_FOUND_EMOJI_ID = "5819154526816444042"
+WHISPER_PHONE_EMOJI_ID = "6057891250332241964"
+WHISPER_SENT_EMOJI_ID = "6059631768649077274"
+WHISPER_READ_EMOJI_ID = "6084779072750097974"
+WHISPER_REPEAT_EMOJI_ID = "5843493805835165294"
+WHISPER_SUPPORT_EMOJI_ID = "5911319564301376749"
+WHISPER_DELETE_EMOJI_ID = "5819154526816444042"
+
+
+def whisper_emoji(emoji_id: str, fallback: str) -> str:
+    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+
+
+def whisper_display_target(w_data: dict) -> str:
+    username = (w_data.get("target_username") or "").strip().lstrip("@")
+    if username:
+        return f"@{html.escape(username)}"
+    return str(w_data.get("target_uid") or "")
+
+
+def build_whisper_sent_keyboard(w_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "خواندن نجوا",
+                callback_data=f"wh_read:{w_id}",
+                style="success",
+                icon_custom_emoji_id=WHISPER_READ_EMOJI_ID,
+            ),
+            InlineKeyboardButton(
+                "حذف نجوا",
+                callback_data=f"wh_del:{w_id}",
+                style="danger",
+                icon_custom_emoji_id=WHISPER_DELETE_EMOJI_ID,
+            ),
+        ]
+    ])
+
+
+def build_whisper_read_keyboard(w_data: dict, w_id: str) -> InlineKeyboardMarkup:
+    sender_username = (w_data.get("sender_username") or "").strip().lstrip("@")
+    reply_query = f"@{sender_username} " if sender_username else f"{w_data['sender_id']} "
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "خواندن مجدد",
+                callback_data=f"wh_read:{w_id}",
+                style="primary",
+                icon_custom_emoji_id=WHISPER_REPEAT_EMOJI_ID,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "پاسخ به نجوا",
+                switch_inline_query_current_chat=reply_query,
+                style="success",
+                icon_custom_emoji_id=WHISPER_READ_EMOJI_ID,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "کانال پشتیبانی",
+                url=WHISPER_SUPPORT_URL,
+                style="primary",
+                icon_custom_emoji_id=WHISPER_SUPPORT_EMOJI_ID,
+            )
+        ],
+    ])
+
+
 async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query_obj = update.inline_query
     logger.info(f"Received Inline Query from {query_obj.from_user.id}: '{query_obj.query}'")
-    
+
     query = query_obj.query.strip()
     user = query_obj.from_user
-       
+
     if not query:
-        help_text = (
-            '<tg-emoji emoji-id="6084779072750097974">✅</tg-emoji> <b>آموزش نجوا در ربات گودی!</b>\n'
-            '<b>- روی این دکمه کلیک کن و یاد بگیر چجوری نجوا بفرستی.</b>'
+        intro_text = (
+            f'{whisper_emoji(WHISPER_HELP_EMOJI_ID, "✅")} <b>آموزش نجوا در ربات گودی!</b>\n\n'
+            '- روی این دکمه کلیک کن و یاد بگیر چجوری نجوا بفرستی.'
         )
         results = [
             InlineQueryResultArticle(
                 id="whisper_help",
                 title="آموزش نجوا در ربات گودی!",
-                description="روی این دکمه کلیک کن و یاد بگیر چجوری نجوا بفرستی.",
-                input_message_content=InputTextMessageContent(help_text, parse_mode=ParseMode.HTML)
+                description="برای مشاهده آموزش نجوا کلیک کنید",
+                input_message_content=InputTextMessageContent(
+                    intro_text,
+                    parse_mode=ParseMode.HTML,
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "آموزش نجوا",
+                            callback_data="wh_help",
+                            style="primary",
+                            icon_custom_emoji_id=WHISPER_HELP_EMOJI_ID,
+                        )
+                    ]
+                ]),
             )
         ]
         await update.inline_query.answer(results, cache_time=0, is_personal=True)
@@ -2540,9 +2628,12 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
         results = [
             InlineQueryResultArticle(
                 id="whisper_error",
-                title=" فرمت نامعتبر نجوا",
+                title="فرمت نامعتبر نجوا",
                 description="متن پیام + یوزرنیم یا آیدی عددی گیرنده",
-                input_message_content=InputTextMessageContent("<b> فرمت نجوا اشتباه است. لطفاً گیرنده را در انتهای پیام مشخص کنید.</b>", parse_mode=ParseMode.HTML)
+                input_message_content=InputTextMessageContent(
+                    "<b>فرمت نجوا اشتباه است. لطفاً گیرنده را در انتهای پیام مشخص کنید.</b>",
+                    parse_mode=ParseMode.HTML,
+                ),
             )
         ]
         await update.inline_query.answer(results, cache_time=0, is_personal=True)
@@ -2555,9 +2646,12 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
         results = [
             InlineQueryResultArticle(
                 id="whisper_too_long",
-                title=" متن پیام خیلی طولانی است",
+                title="متن پیام خیلی طولانی است",
                 description="حداکثر طول مجاز ۵۰۰ کاراکتر است.",
-                input_message_content=InputTextMessageContent("<b> متن نجوا بیش از حد طولانی است.</b>", parse_mode=ParseMode.HTML)
+                input_message_content=InputTextMessageContent(
+                    "<b>متن نجوا بیش از حد طولانی است.</b>",
+                    parse_mode=ParseMode.HTML,
+                ),
             )
         ]
         await update.inline_query.answer(results, cache_time=0, is_personal=True)
@@ -2565,38 +2659,83 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
 
     target_uid = None
     target_uname = None
+    resolved_user = None
 
     clean_target = target.strip().lstrip("@").strip().rstrip(".,!?؛؟")
     clean_target = fa_to_en_digits(clean_target)
+
     if clean_target.isdigit():
         target_uid = int(clean_target)
         if target_uid <= 0:
             target_uid = None
+        else:
+            try:
+                resolved_user = await context.bot.get_chat(target_uid)
+            except Exception:
+                resolved_user = None
+
+            if resolved_user is None:
+                cached = load_db().get("members", {}).get(str(target_uid))
+                if not cached:
+                    target_uid = None
     elif re.fullmatch(r"[A-Za-z0-9_]{5,32}", clean_target):
         target_uname = clean_target.lower()
+        try:
+            resolved_user = await context.bot.get_chat(f"@{target_uname}")
+        except Exception:
+            resolved_user = None
+
+        if resolved_user is None:
+            # Keep compatibility with the bot's existing member cache.
+            for uid_str, info in load_db().get("members", {}).items():
+                if str(info.get("username", "")).lstrip("@").lower() == target_uname:
+                    try:
+                        target_uid = int(uid_str)
+                    except Exception:
+                        target_uid = None
+                    break
+            if target_uid is None:
+                target_uname = None
     else:
+        target_uid = None
+
+    if target_uid is None and target_uname is None:
+        not_found_text = (
+            f'{whisper_emoji(WHISPER_NOT_FOUND_EMOJI_ID, "❌")} <b>گیرنده یافت نشد!!</b>\n\n'
+            '- یوزرنیم یا آیدی عددی دریافت کننده را دوباره بررسی کنید.'
+        )
         results = [
             InlineQueryResultArticle(
-                id="whisper_bad_target",
+                id="whisper_not_found",
                 title="گیرنده یافت نشد!!",
                 description="یوزرنیم یا آیدی عددی دریافت کننده را دوباره بررسی کنید.",
                 input_message_content=InputTextMessageContent(
-                    '<tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> <b>گیرنده یافت نشد!!</b>\n'
-                    '<b>- یوزرنیم یا آیدی عددی دریافت کننده را دوباره بررسی کنید.</b>',
-                    parse_mode=ParseMode.HTML
-                )
+                    not_found_text,
+                    parse_mode=ParseMode.HTML,
+                ),
             )
         ]
         await update.inline_query.answer(results, cache_time=0, is_personal=True)
         return
 
+    if resolved_user is not None:
+        real_uid = getattr(resolved_user, "id", None)
+        real_uname = getattr(resolved_user, "username", None)
+        if real_uid:
+            target_uid = int(real_uid)
+        if real_uname:
+            target_uname = real_uname.lower()
+
     if target_uid and target_uid == user.id:
         results = [
             InlineQueryResultArticle(
                 id="whisper_self",
-                title=" ارسال نجوا به خودتان مجاز نیست",
+                title="ارسال نجوا به خودتان مجاز نیست",
                 description="نمی‌توانید برای خودتان نجوا بفرستید.",
-                input_message_content=InputTextMessageContent("<b> نمی‌توانید به خودتان نجوا بفرستید!</b>", parse_mode=ParseMode.HTML)
+                input_message_content=InputTextMessageContent(
+                    "<b>نمی‌توانید به خودتان نجوا بفرستید!</b>",
+                    parse_mode=ParseMode.HTML,
+                ),
             )
         ]
         await update.inline_query.answer(results, cache_time=0, is_personal=True)
@@ -2620,33 +2759,39 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
         "reader_id": None,
         "reader_username": None,
         "reader_name": None,
-        "deleted": False
+        "deleted": False,
     }
     mark_db_dirty()
     save_db(force=True)
 
     display_target = f"@{target_uname}" if target_uname else str(target_uid)
-    result_title = f"ارسال پیام نجوا به {display_target}"
-    result_html = (
-        f'<tg-emoji emoji-id="6057891250332241964">📱</tg-emoji> '
-        f'<b>شما درحال ارسال پیام نجوا به کاربر {html.escape(display_target)} می‌باشید.</b>\n'
-        f'<b>- جهت تایید روی این دکمه کلیک کنید! <tg-emoji emoji-id="6084779072750097974">✅</tg-emoji></b>'
+    confirmation_text = (
+        f'{whisper_emoji(WHISPER_PHONE_EMOJI_ID, "📱")} شما درحال ارسال پیام نجوا به کاربر '
+        f'<b>{html.escape(display_target)}</b> می‌باشید.\n\n'
+        f'- جهت تایید روی این دکمه کلیک کنید! {whisper_emoji(WHISPER_HELP_EMOJI_ID, "✅")}'
     )
 
-    keyboard = InlineKeyboardMarkup([
+    confirmation_keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("مشاهده نجوا", callback_data=f"wh_read:{w_id}", style="success", icon_custom_emoji_id="6084779072750097974"),
-            InlineKeyboardButton("حذف نجوا", callback_data=f"wh_del:{w_id}", style="danger", icon_custom_emoji_id="5819154526816444042")
+            InlineKeyboardButton(
+                "تایید ارسال",
+                callback_data=f"wh_confirm:{w_id}",
+                style="success",
+                icon_custom_emoji_id=WHISPER_HELP_EMOJI_ID,
+            )
         ]
     ])
 
     results = [
         InlineQueryResultArticle(
             id=w_id,
-            title=result_title,
+            title=f"ارسال نجوا به {display_target}",
             description=message_text[:50],
-            input_message_content=InputTextMessageContent(result_html, parse_mode=ParseMode.HTML),
-            reply_markup=keyboard
+            input_message_content=InputTextMessageContent(
+                confirmation_text,
+                parse_mode=ParseMode.HTML,
+            ),
+            reply_markup=confirmation_keyboard,
         )
     ]
     await update.inline_query.answer(results, cache_time=0, is_personal=True)
@@ -3187,6 +3332,48 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
      # WHISPER (NAJVA) CALLBACKS
+    elif data == "wh_help":
+        guide_text = (
+            f'{whisper_emoji(WHISPER_GUIDE_EMOJI_ID, "🔗")} <b>آموزش نجوا در ربات گودی!</b>\n\n'
+            'پیام خود را جلوی یوزرنیم ربات نوشته و در انتهای پیام خود یوزرنیم یا آیدی عددی فرد دریافت کننده را وارد کنید.'
+        )
+        try:
+            await query.edit_message_text(guide_text, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+        await query.answer()
+        return
+
+    elif data.startswith("wh_confirm:"):
+        w_id = data.replace("wh_confirm:", "")
+        whispers = db.get("whispers", {})
+
+        if w_id not in whispers:
+            await query.answer("این نجوا منقضی یا حذف شده است!", show_alert=True)
+            return
+
+        w_data = whispers[w_id]
+        if query.from_user.id != w_data["sender_id"]:
+            await query.answer("فقط فرستنده می‌تواند ارسال نجوا را تایید کند.", show_alert=True)
+            return
+
+        display_target = whisper_display_target(w_data)
+        sent_text = (
+            f'{whisper_emoji(WHISPER_SENT_EMOJI_ID, "📣")} یک نجوا برای کاربر '
+            f'<b>{display_target}</b> ارسال شد.'
+        )
+
+        try:
+            await query.edit_message_text(
+                sent_text,
+                reply_markup=build_whisper_sent_keyboard(w_id),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+        await query.answer()
+        return
+
     elif data.startswith("wh_read:"):
         w_id = data.replace("wh_read:", "")
         whispers = db.get("whispers", {})
@@ -3215,10 +3402,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         is_target = (target_uid and u_id == target_uid) or (target_uname and u_uname == target_uname)
 
         if not is_sender and not is_target:
-            await query.answer("فضولی نکن! این نجوا برای شما نیست.", show_alert=True)
+            await query.answer("این نجوا برای شما نیست.", show_alert=True)
             return
 
-        # نمایش فقط خود پیام؛ بدون عبارت «محتوای نجوا» یا متن اضافه.
+        # Show only the original whisper text; do not change the stored whisper data.
         await query.answer(w_data["text"], show_alert=True)
 
         if is_target and not w_data.get("read", False):
@@ -3230,28 +3417,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             mark_db_dirty()
             save_db(force=True)
 
-            r_mention = get_user_mention(u_id, query.from_user.full_name)
-            edited_text = (
-                f'<b><tg-emoji emoji-id="6084779072750097974">✅</tg-emoji> '
-                f'نجوا با موفقیت توسط کاربر {r_mention} خوانده شد.</b>'
+        # After reading, both sender and receiver get exactly these three actions.
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=build_whisper_read_keyboard(w_data, w_id)
             )
-
-            support_button = InlineKeyboardButton(
-                "کانال پشتیبانی",
-                url="https://t.me/GoodiSupport",
-                style="primary",
-                icon_custom_emoji_id="5911319564301376749"
-            )
-            new_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("خواندن مجدد", callback_data=f"wh_read:{w_id}", style="primary", icon_custom_emoji_id="5843493805835165294")],
-                [InlineKeyboardButton("پاسخ به نجوا", switch_inline_query_current_chat=f"@{w_data['sender_username']} " if w_data.get('sender_username') else f"{w_data['sender_id']} ", style="success", icon_custom_emoji_id="6084779072750097974")],
-                [support_button]
-            ])
-
-            try:
-                await query.edit_message_text(edited_text, reply_markup=new_kb, parse_mode=ParseMode.HTML)
-            except Exception:
-                pass
+        except Exception:
+            pass
         return
 
     elif data.startswith("wh_del:"):
@@ -3274,8 +3446,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("نجوای شما با موفقیت حذف شد.", show_alert=True)
 
         try:
-            del_text = '<b><tg-emoji emoji-id="5818716826699307883">❗️</tg-emoji> این نجوا توسط فرستنده حذف گردید.</b>'
-            await query.edit_message_text(del_text, reply_markup=None, parse_mode=ParseMode.HTML)
+            del_text = (
+                f'<b>{whisper_emoji("5818716826699307883", "❗️")} '
+                'این نجوا توسط فرستنده حذف گردید.</b>'
+            )
+            await query.edit_message_text(
+                del_text,
+                reply_markup=None,
+                parse_mode=ParseMode.HTML,
+            )
         except Exception:
             pass
         return
