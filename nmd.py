@@ -397,6 +397,7 @@ def get_default_db_structure() -> dict:
             "waiting_search_query": {},
             "broadcast_builder": {},
             "waiting_shutdown_msg": {},
+            "waiting_check_user": {},
             "ban_flow": {}
         }
     }
@@ -2112,11 +2113,28 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
     target_uid = None
     target_uname = None
 
-    clean_target = target.lstrip("@")
+    clean_target = target.strip().lstrip("@").strip().rstrip(".,!?؛؟")
+    clean_target = fa_to_en_digits(clean_target)
     if clean_target.isdigit():
         target_uid = int(clean_target)
-    else:
+        if target_uid <= 0:
+            target_uid = None
+    elif re.fullmatch(r"[A-Za-z0-9_]{5,32}", clean_target):
         target_uname = clean_target.lower()
+    else:
+        results = [
+            InlineQueryResultArticle(
+                id="whisper_bad_target",
+                title="❌ گیرنده نامعتبر است",
+                description="@username یا آیدی عددی معتبر وارد کنید",
+                input_message_content=InputTextMessageContent(
+                    "<b>❌ گیرنده نامعتبر است. آخر پیام باید @username یا آیدی عددی معتبر باشد.</b>",
+                    parse_mode=ParseMode.HTML
+                )
+            )
+        ]
+        await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        return
 
     if target_uid and target_uid == user.id:
         results = [
@@ -2260,7 +2278,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 if query.message:
                     await query.message.edit_text(
-                        "<b>پنل دریافت لینک با موفقیت بسته شد.</b>",
+                        f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji> پنل دریافت لینک با موفقیت بسته شد.</b>' ,
                         reply_markup=None,
                         parse_mode=ParseMode.HTML,
                     )
@@ -2485,6 +2503,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         w_data = whispers[w_id]
+        created_at = w_data.get("created_at", 0)
+        if created_at and (datetime.now().timestamp() - created_at) > 86400:
+            whispers.pop(w_id, None)
+            mark_db_dirty()
+            save_db(force=True)
+            await query.answer("❌ این نجوا منقضی شده است!", show_alert=True)
+            return
         sender_id = w_data["sender_id"]
         target_uid = w_data.get("target_uid")
         target_uname = w_data.get("target_username")
@@ -3100,10 +3125,33 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 InlineKeyboardButton("کامنت‌گذاری", callback_data=f"list_comments:{cid}", style="primary", icon_custom_emoji_id="5908745251098473369")
             ],
             [
+                InlineKeyboardButton("بررسی کاربر", callback_data=f"list_check_user:{cid}", style="primary", icon_custom_emoji_id="5884362854903064294")
+            ],
+            [
                 InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id="5983093054842606366")
             ]
         ]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return
+
+    elif data.startswith("list_check_user:"):
+        cid = int(data.replace("list_check_user:", ""))
+        if not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
+            return
+        db.setdefault("states", {}).setdefault("waiting_check_user", {})[str(user_id)] = cid
+        mark_db_dirty()
+        save_db(force=True)
+        await query.answer("📚 آماده‌ام؛ روی پیام کاربر موردنظر ریپلای کن و همان پیام را بفرست.", show_alert=True)
+        try:
+            await query.message.reply_text(
+                '<tg-emoji emoji-id="5884362854903064294">📚</tg-emoji> <b>بررسی کاربر</b>\n\n'
+                'برای بررسی، روی پیام کاربر موردنظر ریپلای کن و یک پیام بفرست.\n'
+                'یا برای لغو، «لغو» را ارسال کن.',
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
         return
 
     elif data.startswith(("list_owners:", "list_admins:", "list_special:", "list_filters:", "list_muted:", "list_banned:", "list_exempt:", "list_warns:", "list_auto_resp:", "list_comments:")):
@@ -4009,6 +4057,28 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             cmd_lower = raw_text.strip().lower()
 
+            normal_link_commands = {
+                "گودی لینک عادی بده",
+                "لینک عادی",
+                "لینک عادی بگیر",
+                "لینک عادی بده",
+            }
+            if cmd_lower in normal_link_commands:
+                try:
+                    text_payload = await generate_group_link_text_payload(context, chat_id, is_once=False)
+                    await update.message.reply_text(
+                        text_payload,
+                        parse_mode=ParseMode.HTML,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True)
+                    )
+                except Exception as e:
+                    logger.exception("Normal link command failed | chat_id=%s | user_id=%s", chat_id, user_id)
+                    await update.message.reply_text(
+                        f"❌ ارسال لینک عادی ناموفق بود: {str(e)[:150]}",
+                        parse_mode=ParseMode.HTML
+                    )
+                return
+
             if any(k in cmd_lower for k in ["عکس", "به صورت عکس", "رو عکس بفرست"]):
                 try:
                     chat_obj = await context.bot.get_chat(chat_id)
@@ -4647,6 +4717,68 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if is_group and clean_raw in ["پنل", "admin", "/admin"] and await is_admin_or_owner(context, chat_id, user_id):
             await command_admin_panel(update, context)
+            return
+
+        if u_str in db["states"].get("waiting_check_user", {}):
+            target_cid = db["states"]["waiting_check_user"].get(u_str)
+            if raw_text.strip().lower() in ["لغو", "cancel"]:
+                del db["states"]["waiting_check_user"][u_str]
+                mark_db_dirty()
+                save_db(force=True)
+                await update.message.reply_text(
+                    f'<tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji> <b>بررسی کاربر لغو شد.</b>',
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            if not await is_admin_or_owner(context, target_cid, user_id):
+                del db["states"]["waiting_check_user"][u_str]
+                mark_db_dirty()
+                save_db(force=True)
+                return
+
+            if not update.message.reply_to_message or not update.message.reply_to_message.from_user:
+                await update.message.reply_text(
+                    '<tg-emoji emoji-id="5884362854903064294">📚</tg-emoji> <b>برای بررسی باید روی پیام خود کاربر ریپلای کنی.</b>',
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            target_user = update.message.reply_to_message.from_user
+            try:
+                member = await context.bot.get_chat_member(target_cid, target_user.id)
+                status_map = {
+                    ChatMemberStatus.OWNER: "مالک",
+                    ChatMemberStatus.ADMINISTRATOR: "مدیر",
+                    ChatMemberStatus.MEMBER: "عضو",
+                    ChatMemberStatus.RESTRICTED: "محدود شده",
+                    ChatMemberStatus.LEFT: "خارج شده",
+                    ChatMemberStatus.BANNED: "بن شده",
+                }
+                status_text = status_map.get(member.status, str(member.status))
+            except Exception:
+                status_text = "نامشخص"
+
+            uid = target_user.id
+            uid_str = str(uid)
+            member_data = db.get("members", {}).get(uid_str, {})
+            stats = db.get("user_stats", {}).get(uid_str, {})
+            name = html.escape(target_user.full_name or member_data.get("fullname") or "کاربر")
+            username = target_user.username or member_data.get("username") or "ندارد"
+            username_text = f"@{html.escape(username)}" if username != "ندارد" else "ندارد"
+
+            info_text = (
+                f'<tg-emoji emoji-id="5884362854903064294">📚</tg-emoji> <b>بررسی کاربر</b>\n\n'
+                f'<b>نام:</b> {name}\n'
+                f'<b>یوزرنیم:</b> {username_text}\n'
+                f'<b>آیدی عددی:</b> <code>{uid}</code>\n'
+                f'<b>وضعیت در گروه:</b> {status_text}\n'
+                f'<b>امتیاز فعالیت:</b> {sum(v for v in stats.values() if isinstance(v, (int, float)))}'
+            )
+            del db["states"]["waiting_check_user"][u_str]
+            mark_db_dirty()
+            save_db(force=True)
+            await update.message.reply_text(info_text, parse_mode=ParseMode.HTML)
             return
 
         if u_str in db["states"].get("waiting_welcome_msg", {}):
