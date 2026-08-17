@@ -4952,6 +4952,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     owner_ids = _role_ids(g_data, "owners")
                     admin_ids = _role_ids(g_data, "admins")
                     primary_owner = is_primary_group_owner_id(g_data, uid)
+                    target_label = f"@{html.escape(uname.lstrip('@'))}" if uname else get_user_mention(uid, name)
 
                     if role == "special" and int(uid) == int(OWNER_ID):
                         await update.message.reply_text(
@@ -4969,7 +4970,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # مالک گروه باید فقط با عنوان مالک شناخته شود.
                         if primary_owner:
                             await update.message.reply_text(
-                                f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>',
+                                f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {target_label} مالک می‌باشد.</b>',
                                 parse_mode=ParseMode.HTML
                             ); return
                         # First check the bot's own lists.
@@ -4996,7 +4997,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 ids.append(uid)
                             mark_db_dirty(); save_db(force=True)
                             await update.message.reply_text(
-                                f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>',
+                                f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {target_label} مالک می‌باشد.</b>',
                                 parse_mode=ParseMode.HTML
                             ); return
 
@@ -5218,6 +5219,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> مالک می‌باشد.</b>', parse_mode=ParseMode.HTML); return
                 if is_group_manager_id(g_data, uid):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> مدیر می‌باشد.</b>', parse_mode=ParseMode.HTML); return
+
+                # Also inspect Telegram's live role. This prevents trying to mute/ban
+                # a real group owner/admin when the bot's local management list is stale.
+                try:
+                    live_member = await context.bot.get_chat_member(chat_id, uid)
+                    if live_member.status == ChatMemberStatus.OWNER:
+                        live_label = f"@{html.escape(uname.lstrip('@'))}" if uname else get_user_mention(uid, name)
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🎖️</tg-emoji> کاربر {live_label} مالک می‌باشد.</b>',
+                            parse_mode=ParseMode.HTML
+                        ); return
+                    if live_member.status == ChatMemberStatus.ADMINISTRATOR:
+                        live_label = f"@{html.escape(uname.lstrip('@'))}" if uname else get_user_mention(uid, name)
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> کاربر {live_label} مدیر می‌باشد.</b>',
+                            parse_mode=ParseMode.HTML
+                        ); return
+                except Exception:
+                    pass
+
                 if action in ("ban", "mute") and not await bot_can_restrict_members(context, chat_id):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات دسترسی {"بن کردن" if action=="ban" else "سکوت کردن"} را ندارد.</b>', parse_mode=ParseMode.HTML); return
                 db.setdefault("members", {})[str(uid)] = {"username": uname, "fullname": name}
