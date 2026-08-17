@@ -2566,7 +2566,6 @@ def build_whisper_read_keyboard(w_data: dict, w_id: str) -> InlineKeyboardMarkup
                 callback_data=f"wh_read:{w_id}",
                 style="primary",
                 icon_custom_emoji_id=WHISPER_REPEAT_EMOJI_ID,
-                icon_custom_emoji_id="5843493805835165294"
             )
         ],
         [
