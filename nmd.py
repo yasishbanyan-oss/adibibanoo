@@ -2557,7 +2557,7 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
                 id="whisper_too_long",
                 title=" متن پیام خیلی طولانی است",
                 description="حداکثر طول مجاز ۵۰۰ کاراکتر است.",
-                input_message_content=InputTextMessageContent("<b> متن شما خیلی طولانی است لطفا در دو نجوا آن را ارسال کنید.</b>", parse_mode=ParseMode.HTML)
+                input_message_content=InputTextMessageContent("<b> متن نجوا بیش از حد طولانی است.</b>", parse_mode=ParseMode.HTML)
             )
         ]
         await update.inline_query.answer(results, cache_time=0, is_personal=True)
@@ -2947,6 +2947,24 @@ async def render_cleanup_confirm(query, list_type: str, chat_id: int):
     ]])
     await query.message.edit_text(f'<b>آیا از پاکسازی کامل لیست {names.get(list_type, "موردنظر")} مطمئن هستید؟</b>', reply_markup=kb, parse_mode=ParseMode.HTML)
 
+async def test_premium_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "تست ایموجی",
+                callback_data="test_premium_emoji",
+                style="success",
+                icon_custom_emoji_id="6084779072750097974"
+            )
+        ]
+    ])
+
+    await update.message.reply_text(
+        "<b>تست Premium Emoji روی دکمه:</b>",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+
 # ==========================================
 # CALLBACK QUERY HANDLER
 # ==========================================
@@ -3213,7 +3231,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         sent_text = (
-            f'<tg-emoji emoji-id="6059631768649077274">📣</tg-emoji> '
+            f'<tg-emoji emoji-id="6084779072750097974">✅</tg-emoji> '
             f'<b>یک نجوا برای کاربر {html.escape(display_target)} ارسال شد.</b>'
         )
 
@@ -6968,6 +6986,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", command_start))
     app.add_handler(CommandHandler("panel", command_owner_panel))
+    app.add_handler(CommandHandler("testemoji", test_premium_button))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
