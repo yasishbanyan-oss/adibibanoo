@@ -291,6 +291,143 @@ def get_persian_date_str():
     wd, time_str = get_persian_date_info()
     return f"{wd} ، ساعت {time_str}"
 
+
+def format_user_event_time(timestamp=None) -> str:
+    """Format moderation/join timestamps in the same Persian style used by the bot."""
+    dt = datetime.fromtimestamp(timestamp or datetime.now().timestamp(), ZoneInfo("Asia/Tehran"))
+    weekdays = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه", "شنبه", "یکشنبه"]
+    wd = weekdays[dt.weekday()]
+    hour = dt.hour
+    minute = dt.strftime("%M")
+    period = "صبح" if hour < 12 else ("ظهر" if hour < 17 else "شب")
+    hour12 = hour % 12 or 12
+    return f"{wd} {hour12}:{minute} {period}"
+
+
+def get_group_user_record(db: dict, chat_id: int, user_id: int) -> dict:
+    """Return persistent per-group history for a user without disturbing old DB data."""
+    g_data = get_group_data(db, chat_id)
+    records = g_data.setdefault("user_records", {})
+    uid = str(user_id)
+    if uid not in records or not isinstance(records[uid], dict):
+        records[uid] = {
+            "first_joined_at": None,
+            "ban_count": 0,
+            "last_ban_at": None,
+            "mute_count": 0,
+            "last_mute_at": None,
+        }
+        mark_db_dirty()
+    else:
+        records[uid].setdefault("first_joined_at", None)
+        records[uid].setdefault("ban_count", 0)
+        records[uid].setdefault("last_ban_at", None)
+        records[uid].setdefault("mute_count", 0)
+        records[uid].setdefault("last_mute_at", None)
+    return records[uid]
+
+
+def _restricted_is_muted(chat_member) -> bool:
+    if getattr(chat_member, "status", None) != ChatMemberStatus.RESTRICTED:
+        return False
+    permissions = getattr(chat_member, "permissions", None)
+    if permissions is None:
+        return True
+    return not bool(getattr(permissions, "can_send_messages", False))
+
+
+async def track_group_user_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Persist join/ban/mute history for the user-check panel."""
+    result = update.chat_member
+    if not result:
+        return
+
+    chat = result.chat
+    if not chat or chat.type not in ["group", "supergroup"]:
+        return
+
+    user = result.new_chat_member.user
+    if not user or user.is_bot:
+        return
+
+    old_member = result.old_chat_member
+    new_member = result.new_chat_member
+    old_status = old_member.status
+    new_status = new_member.status
+    now_ts = datetime.now().timestamp()
+    record = get_group_user_record(load_db(), chat.id, user.id)
+
+    was_real_member = old_status in [
+        ChatMemberStatus.MEMBER,
+        ChatMemberStatus.ADMINISTRATOR,
+        ChatMemberStatus.OWNER,
+    ]
+    is_real_member = (
+        new_status in [
+            ChatMemberStatus.MEMBER,
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.OWNER,
+        ]
+        or (new_status == ChatMemberStatus.RESTRICTED and getattr(new_member, "is_member", True))
+    )
+
+    # First time we observe an actual join.
+    if not record.get("first_joined_at") and not was_real_member and is_real_member:
+        record["first_joined_at"] = now_ts
+        mark_db_dirty()
+
+    # A new ban event.
+    if new_status == ChatMemberStatus.BANNED and old_status != ChatMemberStatus.BANNED:
+        record["ban_count"] = int(record.get("ban_count", 0)) + 1
+        record["last_ban_at"] = now_ts
+        mark_db_dirty()
+
+    # A new mute/restriction event. Only count it when sending messages is disabled.
+    new_muted = _restricted_is_muted(new_member)
+    old_muted = _restricted_is_muted(old_member)
+    if new_muted and not old_muted:
+        record["mute_count"] = int(record.get("mute_count", 0)) + 1
+        record["last_mute_at"] = now_ts
+        mark_db_dirty()
+
+    save_db()
+
+
+async def resolve_check_user(context: ContextTypes.DEFAULT_TYPE, db: dict, chat_id: int, target_text: str):
+    """Resolve numeric ID or @username using Telegram and the bot's stored member cache."""
+    clean = fa_to_en_digits(target_text.strip().lstrip("@"))
+    if clean.isdigit():
+        uid = int(clean)
+        if uid <= 0:
+            return None
+        try:
+            member = await context.bot.get_chat_member(chat_id, uid)
+            return member.user
+        except Exception:
+            cached = db.get("members", {}).get(str(uid))
+            if cached:
+                # Lightweight User object is unnecessary; return cache tuple marker.
+                return {"id": uid, "username": cached.get("username", ""), "full_name": cached.get("fullname", "کاربر")}
+            return None
+
+    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", clean):
+        return None
+
+    username = clean.lower()
+    for uid_str, info in db.get("members", {}).items():
+        if str(info.get("username", "")).lower() == username:
+            try:
+                member = await context.bot.get_chat_member(chat_id, int(uid_str))
+                return member.user
+            except Exception:
+                return {
+                    "id": int(uid_str),
+                    "username": info.get("username", ""),
+                    "full_name": info.get("fullname", "کاربر"),
+                }
+
+    return None
+
 # ==========================================
 # GLOBAL DB CACHE & ISOLATION HELPERS
 # ==========================================
@@ -397,6 +534,7 @@ def get_default_db_structure() -> dict:
             "waiting_search_query": {},
             "broadcast_builder": {},
             "waiting_shutdown_msg": {},
+            "waiting_check_user": {},
             "ban_flow": {}
         }
     }
@@ -952,6 +1090,9 @@ async def handle_chat_member_welcome(update: Update, context: ContextTypes.DEFAU
     user = result.new_chat_member.user
     if not user or user.is_bot:
         return
+
+    # Keep a private per-group history for the "بررسی کاربر" panel.
+    await track_group_user_status(update, context)
 
     old_status = result.old_chat_member.status
     new_status = result.new_chat_member.status
@@ -2112,11 +2253,28 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
     target_uid = None
     target_uname = None
 
-    clean_target = target.lstrip("@")
+    clean_target = target.strip().lstrip("@").strip().rstrip(".,!?؛؟")
+    clean_target = fa_to_en_digits(clean_target)
     if clean_target.isdigit():
         target_uid = int(clean_target)
-    else:
+        if target_uid <= 0:
+            target_uid = None
+    elif re.fullmatch(r"[A-Za-z0-9_]{5,32}", clean_target):
         target_uname = clean_target.lower()
+    else:
+        results = [
+            InlineQueryResultArticle(
+                id="whisper_bad_target",
+                title="❌ گیرنده نامعتبر است",
+                description="@username یا آیدی عددی معتبر وارد کنید",
+                input_message_content=InputTextMessageContent(
+                    "<b>❌ گیرنده نامعتبر است. آخر پیام باید @username یا آیدی عددی معتبر باشد.</b>",
+                    parse_mode=ParseMode.HTML
+                )
+            )
+        ]
+        await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        return
 
     if target_uid and target_uid == user.id:
         results = [
@@ -2260,7 +2418,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 if query.message:
                     await query.message.edit_text(
-                        "<b>پنل دریافت لینک با موفقیت بسته شد.</b>",
+                        f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji> پنل دریافت لینک با موفقیت بسته شد.</b>' ,
                         reply_markup=None,
                         parse_mode=ParseMode.HTML,
                     )
@@ -2485,6 +2643,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         w_data = whispers[w_id]
+        created_at = w_data.get("created_at", 0)
+        if created_at and (datetime.now().timestamp() - created_at) > 86400:
+            whispers.pop(w_id, None)
+            mark_db_dirty()
+            save_db(force=True)
+            await query.answer("❌ این نجوا منقضی شده است!", show_alert=True)
+            return
         sender_id = w_data["sender_id"]
         target_uid = w_data.get("target_uid")
         target_uname = w_data.get("target_username")
@@ -3100,7 +3265,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 InlineKeyboardButton("کامنت‌گذاری", callback_data=f"list_comments:{cid}", style="primary", icon_custom_emoji_id="5908745251098473369")
             ],
             [
-                InlineKeyboardButton("📚 بررسی کاربر", callback_data=f"list_check_user:{cid}", style="primary", icon_custom_emoji_id="5884362854903064294")
+                InlineKeyboardButton("بررسی کاربر", callback_data=f"list_check_user:{cid}", style="primary", icon_custom_emoji_id="5884362854903064294")
             ],
             [
                 InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id="5983093054842606366")
@@ -3114,25 +3279,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_admin_or_owner(context, cid, user_id):
             await query.answer("❌ دسترسی غیرمجاز!", show_alert=True)
             return
-
-        text = (
-            '<b>به بخش <tg-emoji emoji-id="5884362854903064294">📚</tg-emoji>بررسی کاربر خوش آمدید.</b>\n\n'
-            '<b><tg-emoji emoji-id="6030507681314250465">🕯</tg-emoji> جهت دریافت اطلاعات شخص موردنظر ، آیدی عددی یا یوزرنیم تلگرام آن را بفرستید.</b>'
-        )
-        buttons = [[
-            InlineKeyboardButton(
-                "🔙 بازگشت",
-                callback_data=f"panel_group_lists:{cid}",
-                style="danger",
-                icon_custom_emoji_id="5983093054842606366"
+        db.setdefault("states", {}).setdefault("waiting_check_user", {})[str(user_id)] = cid
+        mark_db_dirty()
+        save_db(force=True)
+        await query.answer("📚 آماده‌ام؛ آیدی عددی یا یوزرنیم تلگرام کاربر را ارسال کن.", show_alert=True)
+        try:
+            await query.message.reply_text(
+                '<tg-emoji emoji-id="5884362854903064294">📚</tg-emoji> <b>به بخش 📚بررسی کاربر خوش آمدید.</b>\n\n'
+                '🕯 جهت دریافت اطلاعات شخص موردنظر ، آیدی عددی یا یوزرنیم تلگرام آن را بفرستید.',
+                parse_mode=ParseMode.HTML
             )
-        ]]
-        await query.message.edit_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode=ParseMode.HTML
-        )
-        await query.answer()
+        except Exception:
+            pass
         return
 
     elif data.startswith(("list_owners:", "list_admins:", "list_special:", "list_filters:", "list_muted:", "list_banned:", "list_exempt:", "list_warns:", "list_auto_resp:", "list_comments:")):
@@ -4038,6 +4196,28 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             cmd_lower = raw_text.strip().lower()
 
+            normal_link_commands = {
+                "گودی لینک عادی بده",
+                "لینک عادی",
+                "لینک عادی بگیر",
+                "لینک عادی بده",
+            }
+            if cmd_lower in normal_link_commands:
+                try:
+                    text_payload = await generate_group_link_text_payload(context, chat_id, is_once=False)
+                    await update.message.reply_text(
+                        text_payload,
+                        parse_mode=ParseMode.HTML,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True)
+                    )
+                except Exception as e:
+                    logger.exception("Normal link command failed | chat_id=%s | user_id=%s", chat_id, user_id)
+                    await update.message.reply_text(
+                        f"❌ ارسال لینک عادی ناموفق بود: {str(e)[:150]}",
+                        parse_mode=ParseMode.HTML
+                    )
+                return
+
             if any(k in cmd_lower for k in ["عکس", "به صورت عکس", "رو عکس بفرست"]):
                 try:
                     chat_obj = await context.bot.get_chat(chat_id)
@@ -4676,6 +4856,122 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if is_group and clean_raw in ["پنل", "admin", "/admin"] and await is_admin_or_owner(context, chat_id, user_id):
             await command_admin_panel(update, context)
+            return
+
+        if u_str in db["states"].get("waiting_check_user", {}):
+            target_cid = db["states"]["waiting_check_user"].get(u_str)
+
+            if raw_text.strip().lower() in ["لغو", "cancel"]:
+                del db["states"]["waiting_check_user"][u_str]
+                mark_db_dirty()
+                save_db(force=True)
+                await update.message.reply_text(
+                    f'<tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji> <b>بررسی کاربر لغو شد.</b>',
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            if not await is_admin_or_owner(context, target_cid, user_id):
+                del db["states"]["waiting_check_user"][u_str]
+                mark_db_dirty()
+                save_db(force=True)
+                return
+
+            target_user = await resolve_check_user(context, db, target_cid, raw_text)
+            if not target_user:
+                await update.message.reply_text(
+                    '<tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> <b>کاربر پیدا نشد.</b>\n\n'
+                    'لطفاً آیدی عددی معتبر یا یوزرنیم تلگرام صحیح را ارسال کنید.',
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            uid = int(target_user.id)
+            uid_str_target = str(uid)
+            member_data = db.get("members", {}).get(uid_str_target, {})
+
+            target_name = (
+                getattr(target_user, "full_name", None)
+                or (target_user.get("full_name") if isinstance(target_user, dict) else None)
+                or member_data.get("fullname")
+                or "کاربر"
+            )
+            target_username = (
+                getattr(target_user, "username", None)
+                if not isinstance(target_user, dict)
+                else target_user.get("username")
+            ) or member_data.get("username") or ""
+
+            # Refresh the global cache with the most recent profile we have.
+            db.setdefault("members", {})[uid_str_target] = {
+                "username": target_username,
+                "fullname": target_name,
+            }
+
+            record = get_group_user_record(db, target_cid, uid)
+
+            try:
+                member = await context.bot.get_chat_member(target_cid, uid)
+                status = member.status
+            except Exception:
+                member = None
+                status = None
+
+            # If the API returns restricted, distinguish an actual mute from another restriction.
+            if status == ChatMemberStatus.BANNED:
+                current_status = "بن"
+            elif status == ChatMemberStatus.RESTRICTED:
+                current_status = "سکوت" if _restricted_is_muted(member) else "بدون مجازات"
+            else:
+                current_status = "بدون مجازات"
+
+            # Group/bot rank.
+            if uid == int(OWNER_ID):
+                rank_text = "مالک"
+            elif status == ChatMemberStatus.OWNER:
+                rank_text = "مالک"
+            elif status == ChatMemberStatus.ADMINISTRATOR:
+                rank_text = "ادمین"
+            else:
+                rank_text = "عضو عادی"
+
+            join_text = (
+                format_user_event_time(record["first_joined_at"])
+                if record.get("first_joined_at")
+                else "ثبت نشده"
+            )
+            last_ban_text = (
+                format_user_event_time(record["last_ban_at"])
+                if record.get("last_ban_at")
+                else "ندارد"
+            )
+            last_mute_text = (
+                format_user_event_time(record["last_mute_at"])
+                if record.get("last_mute_at")
+                else "ندارد"
+            )
+
+            username_display = f"@{html.escape(target_username)}" if target_username else "ندارد"
+            name_display = html.escape(target_name)
+
+            info_text = (
+                f'<tg-emoji emoji-id="5884362854903064294">📚</tg-emoji> <b>بررسی کاربر</b>\n\n'
+                f'<tg-emoji emoji-id="6008124493610885197">🔗</tg-emoji> <b>نام :</b> {name_display}\n'
+                f'<tg-emoji emoji-id="6008341333624758856">💎</tg-emoji> <b>آیدی تلگرام :</b> {username_display}\n'
+                f'<tg-emoji emoji-id="6008070651900861977">📤</tg-emoji> <b>آیدی عددی تلگرام :</b> <code>{uid}</code>\n'
+                f'<tg-emoji emoji-id="6008261704931089837">📆</tg-emoji> <b>تاریخ عضویت در گروه :</b> {join_text}\n'
+                f'<tg-emoji emoji-id="5873075766748520540">⛔️</tg-emoji> <b>تعداد بار‌های بن شدن :</b> {int(record.get("ban_count", 0))}\n'
+                f'<tg-emoji emoji-id="6007982695265608502">⏰</tg-emoji> <b>آخرین بن از گروه :</b> {last_ban_text}\n'
+                f'<tg-emoji emoji-id="5875037024909532569">😴</tg-emoji> <b>تعداد بارهای سکوت شدن :</b> {int(record.get("mute_count", 0))}\n'
+                f'<tg-emoji emoji-id="6007923248623263109">📥</tg-emoji> <b>آخرین سکوت از گروه :</b> {last_mute_text}\n'
+                f'<tg-emoji emoji-id="6059658968676961981">🆙</tg-emoji> <b>وضعیت کنونی :</b> {current_status}\n'
+                f'<tg-emoji emoji-id="5846195056796509162">🏅</tg-emoji> <b>مقام در ربات و گروه :</b> {rank_text}'
+            )
+
+            del db["states"]["waiting_check_user"][u_str]
+            mark_db_dirty()
+            save_db(force=True)
+            await update.message.reply_text(info_text, parse_mode=ParseMode.HTML)
             return
 
         if u_str in db["states"].get("waiting_welcome_msg", {}):
