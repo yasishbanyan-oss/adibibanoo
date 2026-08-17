@@ -5284,25 +5284,25 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
               return
               mention = get_user_mention(uid, name)
             if int(uid) == int(OWNER_ID):
-               await update.message.reply_text(
+              await update.message.reply_text(
                f'<b>›› <tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">👑</tg-emoji> کاربر {mention} مالک ربات می‌باشد.</b>',
               parse_mode=ParseMode.HTML
             )
-             return
+              return
             
             if is_primary_group_owner_id(g_data, uid):
-             await update.message.reply_text(
+              await update.message.reply_text(
                f'<b>›› <tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">👑</tg-emoji> کاربر {mention} مالک گروه می‌باشد.</b>',
              parse_mode=ParseMode.HTML
             )
-             return
+              return
 
             if uid in _role_ids(g_data, "special"):
               await update.message.reply_text(
                f'<b>›› <tg-emoji emoji-id="{PREMIUM_ROLE_EMOJI}">🏅</tg-emoji> کاربر {mention} عضو ویژه می‌باشد.</b>',
              parse_mode=ParseMode.HTML
             )
-             return
+              return
             
             if is_group_manager_id(g_data, uid):
              await update.message.reply_text(
