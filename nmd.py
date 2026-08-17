@@ -3405,13 +3405,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("این نجوا برای شما نیست.", show_alert=True)
             return
 
-        # Everyone who is authorized (sender or real receiver) can view the
-        # whisper text, but ONLY the real receiver may mark it as read.
+        # Always show the whisper text to an authorized viewer.
         await query.answer(w_data["text"], show_alert=True)
 
+        # IMPORTANT: the sender may preview their own whisper, but ONLY the
+        # actual receiver is allowed to mark it as read. The sender must not
+        # receive post-read actions or trigger a read notification.
         if not is_target:
-            # Sender can preview/read their own sent whisper, but this must not
-            # mutate read state, add post-read buttons, or notify the sender.
             return
 
         if not w_data.get("read", False):
@@ -3423,7 +3423,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             mark_db_dirty()
             save_db(force=True)
 
-            # Notify the sender only when the real receiver actually reads it.
+            # Notify the sender only after the real receiver reads the whisper.
             reader_username = (query.from_user.username or "").strip().lstrip("@")
             if reader_username:
                 reader_label = f"@{html.escape(reader_username)}"
@@ -3448,7 +3448,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     e,
                 )
 
-        # Post-read actions are exposed only after the real receiver has read.
+        # These three actions are shown ONLY to the real receiver after a read.
         try:
             await query.edit_message_reply_markup(
                 reply_markup=build_whisper_read_keyboard(w_data, w_id)
