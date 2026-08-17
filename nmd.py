@@ -2521,8 +2521,8 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
        
     if not query:
         help_text = (
-            '<tg-emoji emoji-id="6084779072750097974">✅</tg-emoji> <b>آموزش نجوا در ربات گودی!</b>\n'
-            '<b>- روی این دکمه کلیک کن و یاد بگیر چجوری نجوا بفرستی.</b>'
+            '<tg-emoji emoji-id="6084584811379299518">🔗</tg-emoji> <b>آموزش نجوا در ربات گودی!</b>\n\n'
+            'پیام خود را جلوی یوزرنیم ربات نوشته و در انتهای پیام خود یوزرنیم یا آیدی عددی فرد دریافت کننده را وارد کنید.'
         )
         results = [
             InlineQueryResultArticle(
@@ -3213,7 +3213,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         sent_text = (
-            f'<tg-emoji emoji-id="6059631768649077274">📣</tg-emoji> '
+            f'<tg-emoji emoji-id="6084779072750097974">✅</tg-emoji> '
             f'<b>یک نجوا برای کاربر {html.escape(display_target)} ارسال شد.</b>'
         )
 
@@ -3289,56 +3289,37 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             reader_username = query.from_user.username
             reader_display = f"@{reader_username}" if reader_username else str(u_id)
             edited_text = (
-                f'<tg-emoji emoji-id="6059631768649077274">📣</tg-emoji> '
+                f'<tg-emoji emoji-id="6084779072750097974">✅</tg-emoji> '
                 f'<b>نجوای ارسالی توسط کاربر {html.escape(reader_display)} خوانده شد.</b>'
             )
 
+            # After the whisper is read, both sender and recipient see the same
+            # three glass buttons. No private message is sent to either user.
             new_kb = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
-                        " خواندن مجدد",
+                        "خواندن مجدد",
                         callback_data=f"wh_read:{w_id}",
                         style="primary",
-                        icon_custom_emoji_id="5843493805835165294"
+                        icon_custom_emoji_id="5843493805835165294"  # 👀
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        " پاسخ به نجوا",
-                        switch_inline_query_current_chat=f"@{w_data['sender_username']} " if w_data.get('sender_username') else f"{w_data['sender_id']} ",
+                        "پاسخ به نجوا",
+                        switch_inline_query_current_chat=(
+                            f"@{w_data['sender_username']} "
+                            if w_data.get('sender_username')
+                            else f"{w_data['sender_id']} "
+                        ),
                         style="success",
-                        icon_custom_emoji_id="6084779072750097974"
+                        icon_custom_emoji_id="6084779072750097974"  # ✅
                     ),
                     InlineKeyboardButton(
-                        " کانال پشتیبانی",
+                        "کانال پشتیبانی",
                         url="https://t.me/GoodiSupport",
                         style="success",
-                        icon_custom_emoji_id="5911319564301376749"
-                    )
-                ]
-            ]) if is_target and not is_sender else InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        " خواندن مجدد",
-                        callback_data=f"wh_read:{w_id}",
-                        style="primary",
-                        icon_custom_emoji_id="5843493805835165294"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        " حذف نجوا",
-                        callback_data=f"wh_del:{w_id}",
-                        style="danger",
-                        icon_custom_emoji_id="5819154526816444042"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        " پاسخ به نجوا",
-                        switch_inline_query_current_chat=f"@{w_data['sender_username']} " if w_data.get('sender_username') else f"{w_data['sender_id']} ",
-                        style="success",
-                        icon_custom_emoji_id="6084779072750097974"
+                        icon_custom_emoji_id="5911319564301376749"  # 🤖
                     )
                 ]
             ])
