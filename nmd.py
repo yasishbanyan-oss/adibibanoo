@@ -2557,7 +2557,7 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
                 id="whisper_too_long",
                 title=" متن پیام خیلی طولانی است",
                 description="حداکثر طول مجاز ۵۰۰ کاراکتر است.",
-                input_message_content=InputTextMessageContent("<b> متن نجوا بیش از حد طولانی است.</b>", parse_mode=ParseMode.HTML)
+                input_message_content=InputTextMessageContent("<b> متن شما خیلی طولانی است لطفا در دو نجوا آن را ارسال کنید.</b>", parse_mode=ParseMode.HTML)
             )
         ]
         await update.inline_query.answer(results, cache_time=0, is_personal=True)
@@ -3213,7 +3213,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         sent_text = (
-            f'<tg-emoji emoji-id="6084779072750097974">✅</tg-emoji> '
+            f'<tg-emoji emoji-id="6059631768649077274">📣</tg-emoji> '
             f'<b>یک نجوا برای کاربر {html.escape(display_target)} ارسال شد.</b>'
         )
 
