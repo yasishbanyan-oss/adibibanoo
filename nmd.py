@@ -2947,24 +2947,6 @@ async def render_cleanup_confirm(query, list_type: str, chat_id: int):
     ]])
     await query.message.edit_text(f'<b>آیا از پاکسازی کامل لیست {names.get(list_type, "موردنظر")} مطمئن هستید؟</b>', reply_markup=kb, parse_mode=ParseMode.HTML)
 
-async def test_premium_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "تست ایموجی",
-                callback_data="test_premium_emoji",
-                style="success",
-                icon_custom_emoji_id="6084779072750097974"
-            )
-        ]
-    ])
-
-    await update.message.reply_text(
-        "<b>تست Premium Emoji روی دکمه:</b>",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-
 # ==========================================
 # CALLBACK QUERY HANDLER
 # ==========================================
@@ -3238,13 +3220,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         sent_kb = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
-                    " مشاهده نجوا",
+                    "مشاهده نجوا",
                     callback_data=f"wh_read:{w_id}",
                     style="success",
                     icon_custom_emoji_id="6084779072750097974"
                 ),
                 InlineKeyboardButton(
-                    " حذف نجوا",
+                    "حذف نجوا",
                     callback_data=f"wh_del:{w_id}",
                     style="danger",
                     icon_custom_emoji_id="5819154526816444042"
@@ -6986,7 +6968,6 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", command_start))
     app.add_handler(CommandHandler("panel", command_owner_panel))
-    app.add_handler(CommandHandler("testemoji", test_premium_button))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
 
