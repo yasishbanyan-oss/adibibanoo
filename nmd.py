@@ -4924,6 +4924,38 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ شما در هیچ وضعیت انتظاری نیستید.")
 
 # ==========================================
+# GOODI SUPPORT / HELP QUICK REPLY (ADDED)
+# ==========================================
+GOODI_SUPPORT_TRIGGERS = {
+    "گودی سازندت کیه", "سازنده گودی", "گودی سازنده", "سازندت کیه",
+    "پشتیبانی", "گودی پشتیبانی", "پشتیبانی گودی",
+    "گودی کمک", "کمک", "هلپ", "help", "/help", "گودی هلپ",
+}
+
+GOODI_SUPPORT_REPLY = (
+    '<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> درصورت هرگونه مشکل کانال پشتیبانی ربات را چک بفرمایید:</b>\n\n'
+    '- https://t.me/GoodiSupport'
+)
+
+async def handle_goodi_support_quick_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    if not update.message:
+        return False
+    candidate = (update.message.text or update.message.caption or "").strip().lower()
+    candidate = re.sub(r"^[!/]\s*", "", candidate)
+    if candidate not in {x.lstrip("/").lower() for x in GOODI_SUPPORT_TRIGGERS}:
+        return False
+    await update.message.reply_text(
+        GOODI_SUPPORT_REPLY,
+        parse_mode=ParseMode.HTML,
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
+    return True
+
+async def handle_goodi_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await handle_goodi_support_quick_reply(update, context):
+        raise ApplicationHandlerStop
+
+# ==========================================
 # MESSAGE HANDLER
 # ==========================================
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4976,6 +5008,30 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             cmd_lower = raw_text.strip().lower()
+
+            # In forum topics, and whenever the command is a reply to a user,
+            # a plain link request must return the normal group invite directly
+            # (not the link-selection panel). Existing link subcommands remain unchanged.
+            plain_link_forms = {
+                "لینک", "گودی لینک", "دریافت لینک", "لینک بده",
+                "گودی لینک بده", "گودی لینک بگیر", "گودی لینک بفرست",
+            }
+            in_forum_topic = getattr(update.message, "message_thread_id", None) is not None
+            if cmd_lower in plain_link_forms and (in_forum_topic or update.message.reply_to_message):
+                try:
+                    text_payload = await generate_group_link_text_payload(context, chat_id, is_once=False)
+                    await update.message.reply_text(
+                        text_payload,
+                        parse_mode=ParseMode.HTML,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True)
+                    )
+                except Exception as e:
+                    logger.exception("Topic/reply normal link command failed | chat_id=%s | user_id=%s", chat_id, user_id)
+                    await update.message.reply_text(
+                        f" ارسال لینک عادی ناموفق بود: {str(e)[:150]}",
+                        parse_mode=ParseMode.HTML
+                    )
+                return
 
             normal_link_commands = {
                 "گودی لینک عادی بده",
@@ -5060,7 +5116,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "تنظیم مدیر", "مدیر شو", "مدیر کن",
                 "تنظیم مالک", "مالک شو", "مالک کن",
                 "تنظیم ویژه", "ویژه شو", "ویژه کن", "عضو ویژه", "عضو ویژه شو",
+                "ترفیع", "عزل",
                 "معاف", "معاف شو", "معاف کردن",
+                "از مدیر دربیا", "از مدیر دربیار", "از ادمین دربیا", "از ادمین دربیار",
+                "از مالک دربیا", "از مالک دربیار", "از ویژه دربیا", "از ویژه دربیار",
                 "حذف مدیر", "حذف ادمین", "حذف مالک", "حذف ویژه", "حذف عضو ویژه", "حذف معاف",
                 "اخطار", "هشدار", "warn", "حذف اخطار", "حذف هشدار",
                 "بن", "ban", "اخراج", "مسدود", "سیک",
@@ -5090,6 +5149,20 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             g_data = get_group_data(db, chat_id)
             management = g_data.get("management", {}) or {}
+
+            # Added promotion formats: «ترفیع»، «ترفیع @user»،
+            # «ترفیع ادمین @user»، «ترفیع :ادمین شدن @user»، etc.
+            # They are normalized into the existing admin-promotion engine below.
+            promotion_text = re.sub(r"[：:]", " ", cmd)
+            promotion_text = re.sub(r"\s+", " ", promotion_text).strip()
+            promotion_match = re.match(
+                r"^ترفیع(?:\s+(?:ادمین(?:\s+شدن)?|مدیر(?:\s+شدن)?))?(?:\s+(.*))?$",
+                promotion_text,
+                flags=re.IGNORECASE,
+            )
+            if promotion_match:
+                promotion_target = (promotion_match.group(1) or "").strip()
+                cmd = "مدیر شو" + (f" {promotion_target}" if promotion_target else "")
 
             # Management roles: owner / admin / special / exempt.
             role_specs = [
@@ -5227,6 +5300,29 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode=ParseMode.HTML
                     ); return
 
+            # Added demotion formats: «عزل», «از مدیر دربیا/دربیـار», «از مالک دربیا/دربیـار», etc.
+            demotion_text = re.sub(r"[：:]", " ", cmd)
+            demotion_text = re.sub(r"\s+", " ", demotion_text).strip()
+            demotion_aliases = [
+                (r"^عزل(?:\s+(.*))?$", "حذف مدیر"),
+                (r"^از مدیر دربیا(?:\s+(.*))?$", "حذف مدیر"),
+                (r"^از مدیر دربیار(?:\s+(.*))?$", "حذف مدیر"),
+                (r"^از ادمین دربیا(?:\s+(.*))?$", "حذف ادمین"),
+                (r"^از ادمین دربیار(?:\s+(.*))?$", "حذف ادمین"),
+                (r"^از مالک دربیا(?:\s+(.*))?$", "حذف مالک"),
+                (r"^از مالک دربیار(?:\s+(.*))?$", "حذف مالک"),
+                (r"^از ویژه دربیا(?:\s+(.*))?$", "حذف ویژه"),
+                (r"^از ویژه دربیار(?:\s+(.*))?$", "حذف ویژه"),
+                (r"^از عضو ویژه دربیا(?:\s+(.*))?$", "حذف عضو ویژه"),
+                (r"^از عضو ویژه دربیار(?:\s+(.*))?$", "حذف عضو ویژه"),
+            ]
+            for alias_pattern, normalized_command in demotion_aliases:
+                alias_match = re.match(alias_pattern, demotion_text, flags=re.IGNORECASE)
+                if alias_match:
+                    demotion_target = (alias_match.group(1) or "").strip()
+                    cmd = normalized_command + (f" {demotion_target}" if demotion_target else "")
+                    break
+
             remove_specs = [
                 ("admins", ["حذف مدیر", "حذف ادمین"], "مدیر"),
                 ("owners", ["حذف مالک"], "مالک"),
@@ -5297,6 +5393,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Warning commands.
             warn_prefixes = ["اخطار", "هشدار", "warn"]
             warn_match = next((x for x in warn_prefixes if cmd == x or cmd.startswith(x + " ")), None)
+            warn_target_first = False
+            warn_target_first_value = ""
+            if not warn_match:
+                warn_parts = cmd.split()
+                if len(warn_parts) >= 2 and warn_parts[1] in warn_prefixes:
+                    warn_match = warn_parts[1]
+                    warn_target_first = True
+                    warn_target_first_value = warn_parts[0]
             if warn_match:
                 if not await is_configured_group_manager(context, chat_id, user_id):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما مدیر گروه نیستید و دسترسی به سیستم اخطار ندارید.</b>', parse_mode=ParseMode.HTML); return
@@ -5304,6 +5408,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not s.get("punishment"):
                     await update.message.reply_text('<b> شما هنوز مجازاتی برای اخطار مشخص نکردید.</b>\n\n<b> با ارسال دستور پنل و رفتن به بخش تنظیمات پیشرفته مجازات کاربران را مشخص کنید.</b>', parse_mode=ParseMode.HTML); return
                 rest = cmd[len(warn_match):].strip()
+                if warn_target_first:
+                    rest = warn_target_first_value
                 uid, name, uname = await resolve_group_target(update, context, db, chat_id, rest)
                 if not uid:
                     await update.message.reply_text('<b>برای اخطار دادن باید روی کاربر ریپلای کنید یا آیدی/یوزرنیم او را وارد کنید.</b>', parse_mode=ParseMode.HTML); return
@@ -6358,6 +6464,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(" شعر جدید برای این گروه اضافه شد.")
                 return
 
+        # --------------------------------------
+        # GOODI SUPPORT / CREATOR QUICK REPLY
+        # --------------------------------------
+        if await handle_goodi_support_quick_reply(update, context):
+            return
+
         features = db.get("features", {})
 
         # --------------------------------------
@@ -6967,9 +7079,16 @@ def main():
     # General callback & command handlers
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", command_start))
+    app.add_handler(CommandHandler("help", handle_goodi_support_quick_reply))
     app.add_handler(CommandHandler("panel", command_owner_panel))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
+
+    # 5. Goodi support/help quick replies (must run before Dwoz/general text handlers)
+    app.add_handler(
+        MessageHandler(filters.TEXT & (~filters.COMMAND), handle_goodi_support_message),
+        group=-1
+    )
 
     # 5. Dwoz game
     app.add_handler(
