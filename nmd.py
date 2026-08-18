@@ -4929,7 +4929,7 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 GOODI_SUPPORT_TRIGGERS = {
     "گودی سازندت کیه", "سازنده گودی", "گودی سازنده", "سازندت کیه",
     "پشتیبانی", "گودی پشتیبانی", "پشتیبانی گودی",
-    "گودی کمک", "کمک", "هلپ", "help", "/help", "گودی هلپ",
+    "گودی کمک", "کمک", "گودی هلپ",
 }
 
 GOODI_SUPPORT_REPLY = (
@@ -6475,7 +6475,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --------------------------------------
         # HELP / راهنما PANEL
         # --------------------------------------
-        help_triggers = ["راهنما", "/help", "گودی راهنما", "گودی معرفی کن", "گودی چیا بلدی؟", "چیا بلدی؟", "چیا بلدی", "گودی چیا بلدی"]
+        help_triggers = ["راهنما", "/help", "help", "هلپ", "گودی راهنما", "گودی معرفی کن", "گودی چیا بلدی؟", "چیا بلدی؟", "چیا بلدی", "گودی چیا بلدی"]
         if clean_raw in help_triggers:
             txt = (
                 '<b>سلام عزیزم به ربات من خوش اومدی! <tg-emoji emoji-id="5352750090974929602">😍</tg-emoji></b>\n\n'
@@ -7079,7 +7079,7 @@ def main():
     # General callback & command handlers
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", command_start))
-    app.add_handler(CommandHandler("help", handle_goodi_support_quick_reply))
+    app.add_handler(CommandHandler("help", handle_messages))
     app.add_handler(CommandHandler("panel", command_owner_panel))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
